@@ -144,7 +144,7 @@ public final class PriceDb extends SQLiteOpenHelper {
             validatedMemos.add(m);
         }
         for(int i=0;i<purchases.length();i++) {
-            JSONObject o=purchases.getJSONObject(i);PriceDb.Purchase p=new Purchase();p.name=o.getString("name").trim();p.key=PriceMath.key(p.name);p.store=o.getString("store").trim();p.date=o.getString("date");
+            JSONObject o=purchases.getJSONObject(i);Purchase p=new Purchase();p.name=o.getString("name").trim();p.key=PriceMath.key(p.name);p.store=o.getString("store").trim();p.date=o.getString("date");
             p.gross=o.getLong("gross");p.tax=o.getDouble("tax");p.quantity=o.getInt("quantity");p.sale=o.getBoolean("sale");p.size=o.getDouble("size");p.unit=o.getString("unit");
             if(p.name.isEmpty()||p.name.length()>120||p.store.isEmpty()||p.store.length()>120||!p.date.matches("20\\d{2}-\\d{2}-\\d{2}")||p.gross<0||p.gross>10_000_000||p.quantity<1||p.quantity>999||!Double.isFinite(p.tax)||p.tax<0||p.tax>100||!Double.isFinite(p.size)||p.size<0||p.size>1_000_000||!(p.unit.equals("")||p.unit.equals("g")||p.unit.equals("mL")))throw new JSONException("不正な価格履歴");
             validatedPurchases.add(p);
