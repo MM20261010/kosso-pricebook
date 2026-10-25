@@ -26,6 +26,6 @@ extern "C" JNIEXPORT jbyteArray JNICALL Java_org_privateprice_pricebook_PaddleOc
   auto manager=AAssetManager_fromJava(env,assets);if(!manager)throw std::runtime_error("assets");
   localocr::Pipeline pipeline;pipeline.keys=dictionary(manager);
   if(pipeline.detector.load_param(manager,"paddle/det.param")||pipeline.detector.load_model(manager,"paddle/det.bin")||pipeline.recognizer.load_param(manager,"paddle/rec.param")||pipeline.recognizer.load_model(manager,"paddle/rec.bin"))throw std::runtime_error("model load");
-  auto text=pipeline.recognize(bgr);jbyteArray out=env->NewByteArray((jsize)text.size());if(out)env->SetByteArrayRegion(out,0,(jsize)text.size(),(const jbyte*)text.data());return out;
+  auto text=localocr::encode(pipeline.recognizeDocument(bgr));jbyteArray out=env->NewByteArray((jsize)text.size());if(out)env->SetByteArrayRegion(out,0,(jsize)text.size(),(const jbyte*)text.data());return out;
  }catch(...){auto cls=env->FindClass("java/lang/IllegalStateException");if(cls)env->ThrowNew(cls,"PaddleOCRを実行できません。画像を小さくするか、レシートを分割して再選択してください。");return nullptr;}
 }

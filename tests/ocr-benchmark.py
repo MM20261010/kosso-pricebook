@@ -25,6 +25,7 @@ results=[]
 with tempfile.TemporaryDirectory(prefix='kosso-synthetic-') as temp:
     folder=pathlib.Path(temp)
     run('javac','-encoding','UTF-8','-d',str(folder),str(ROOT/'app/src/main/java/org/privateprice/pricebook/ReceiptImage.java'),
+        str(ROOT/'app/src/main/java/org/privateprice/pricebook/OcrDocument.java'),str(ROOT/'app/src/main/java/org/privateprice/pricebook/ReceiptLayout.java'),
         str(ROOT/'app/src/main/java/org/privateprice/pricebook/ReceiptParser.java'),str(ROOT/'tests/PrepareReceiptImage.java'),str(ROOT/'tests/ParseReceiptSummary.java'))
     shadow=np.asarray(base).astype(float)*(0.62+np.linspace(0,0.38,1000)[None,:,None])
     multiline=Image.new('RGB',(1000,1100),'white');md=ImageDraw.Draw(multiline)
