@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check the built/downloaded v0.5 debug APK, without receipt data or network access."""
+"""Check the built/downloaded v0.6 debug APK, without receipt data or network access."""
 import hashlib
 import os
 import json
@@ -24,7 +24,7 @@ def run(tool, *args):
 run('apksigner', 'verify', apk)
 print('PASS APK signature')
 badging = run('aapt', 'dump', 'badging', apk)
-if "package: name='org.privateprice.pricebook' versionCode='5' versionName='0.5.0-debug-compare'" not in badging:
+if "package: name='org.privateprice.pricebook' versionCode='6' versionName='0.6.0-debug-layout'" not in badging:
     raise SystemExit('Unexpected APK package/version')
 permissions = run('aapt', 'dump', 'permissions', apk)
 actual = re.findall(r"^uses-permission(?:-sdk-\d+)?: name='([^']+)'", permissions, re.MULTILINE)
@@ -34,7 +34,7 @@ manifest = run('aapt', 'dump', 'xmltree', apk, 'AndroidManifest.xml')
 for flag in ('allowBackup', 'fullBackupContent', 'usesCleartextTraffic'):
     if not re.search(r'android:' + flag + r'\(0x[0-9a-f]+\)=\(type 0x12\)0x0\s*$', manifest, re.MULTILINE):
         raise SystemExit('APK must disable ' + flag)
-print('PASS v0.5 package, permissions, backup and cleartext settings')
+print('PASS v0.6 package, permissions, backup and cleartext settings')
 with zipfile.ZipFile(apk) as archive:
     for lang, expected in (
         ('eng', '7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2'),

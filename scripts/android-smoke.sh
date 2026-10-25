@@ -30,6 +30,6 @@ s=Path(sys.argv[1]).read_text()
 assert 'INSTRUMENTATION_CODE: -1' in s, 'Android instrumentation did not finish successfully'
 assert 'PASS synthetic-only offline OCR and JSON roundtrip' in s, 'Android synthetic checks failed'
 m=re.search(r'INSTRUMENTATION_RESULT: checks=(\d+)',s)
-assert m and int(m.group(1))>=65, 'Expected synthetic checks did not execute'
+assert m and int(m.group(1))>=95, 'Expected synthetic checks did not execute'
 print('PASS Android emulator: both OCRs used the same pixels; models, date/parser and isolated JSON roundtrip checked')
 PY

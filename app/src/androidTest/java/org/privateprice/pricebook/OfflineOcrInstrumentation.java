@@ -41,14 +41,30 @@ public final class OfflineOcrInstrumentation extends Instrumentation {
                 try(InputStream in=getContext().getAssets().open(file)){image=BitmapFactory.decodeStream(in);}
                 check(image!=null);long before=fingerprint(image);
                 try{
-                    String paddle=PaddleOcr.recognize(getTargetContext(),image);
-                    ReceiptParser.Receipt receipt=ReceiptParser.parseReceipt(paddle);
-                    check(receipt.items.size()==3);check(receipt.date.equals(fixture.getString("date")));
+                    OcrDocument document=PaddleOcr.recognizeDocument(getTargetContext(),image);
+                    check(!document.regions.isEmpty());
+                    ReceiptParser.Receipt receipt=ReceiptParser.parseDocument(document);
+                    check(receipt.items.size()==fixture.getJSONArray("items").length());check(receipt.date.equals(fixture.getString("date")));
                     check(!receipt.store.isEmpty());
                     JSONArray names=fixture.getJSONArray("items"),amounts=fixture.getJSONArray("line_amounts");
                     for(int item=0;item<names.length();item++){
                         final String name=names.getString(item).replaceAll("\\s+","");final long amount=amounts.getLong(item);
-                        check(receipt.items.stream().anyMatch(c->c.name.replaceAll("\\s+","").equals(name)&&c.price==amount));
+                        boolean hasSuffix=false;
+                        if(fixture.has("ambiguous_suffix_items")){JSONArray indexes=fixture.getJSONArray("ambiguous_suffix_items");for(int j=0;j<indexes.length();j++)hasSuffix|=indexes.getInt(j)==item;}
+                        final boolean suffix=hasSuffix;
+                        ReceiptParser.Candidate matched=null;
+                        for(ReceiptParser.Candidate c:receipt.items)if((c.name.replaceAll("\\s+","").equals(name)||suffix&&c.nameSuffixUncertain&&c.name.replaceAll("\\s+","").equals(name+"C"))&&c.price==amount){matched=c;break;}
+                        check(matched!=null);
+                        if(fixture.has("quantities")){
+                            final int q=fixture.getJSONArray("quantities").getInt(item);final long unit=fixture.getJSONArray("units").getLong(item);
+                            check(matched!=null&&Integer.valueOf(q).equals(matched.quantity)&&Long.valueOf(unit).equals(matched.unitPrice));
+                        }
+                    }
+                    if(fixture.has("subtotal")){
+                        check(receipt.itemSum()==2872&&receipt.knownQuantitySum()==8&&receipt.unknownQuantityCount()==0);
+                        check(Long.valueOf(2872).equals(receipt.subtotal)&&Long.valueOf(268).equals(receipt.taxAmount)&&Long.valueOf(3140).equals(receipt.total));
+                        check(receipt.taxBreakdowns.size()==2&&receipt.items.stream().allMatch(c->c.taxRate==null&&c.amountBasis==ReceiptParser.AmountBasis.EXCLUSIVE));
+                        check(receipt.reconciliation().contains("金額一致"));
                     }
                     check(!image.isRecycled()&&fingerprint(image)==before);
                     String tess=ReceiptOcr.recognize(getTargetContext(),image);

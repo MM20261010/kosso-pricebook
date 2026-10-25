@@ -97,6 +97,52 @@
       ],
       "date": "2026-10-23",
       "sha256": "d6c7ef4b94025b8f2ec20ec33035f81c0879226b9bde457a9790207df1ff2c54"
+    },
+    {
+      "id": "v06-mixed-layout",
+      "image": "v06-mixed-layout.png",
+      "items": [
+        "架空りんご",
+        "架空食パン",
+        "架空洗濯洗剤",
+        "架空台所洗剤",
+        "架空ごみ袋20枚入",
+        "架空スポンジ"
+      ],
+      "line_amounts": [
+        480,
+        480,
+        700,
+        398,
+        428,
+        386
+      ],
+      "quantities": [
+        2,
+        1,
+        2,
+        1,
+        1,
+        1
+      ],
+      "units": [
+        240,
+        480,
+        350,
+        398,
+        428,
+        386
+      ],
+      "date": "2026-10-25",
+      "basis": "EXCLUSIVE",
+      "subtotal": 2872,
+      "tax": 268,
+      "total": 3140,
+      "sha256": "9715c3d00ac6de198d5ce00fced19e474ea639b1999b104d1d3cedaa15a21124",
+      "font_sha256": "b76b0433203017ca80401b2ee0dd69350349871c4b19d504c34dbdd80541690a",
+      "ambiguous_suffix_items": [
+        1
+      ]
     }
   ]
 }

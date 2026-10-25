@@ -5,7 +5,6 @@ import android.content.res.AssetManager;
 import android.graphics.Bitmap;
 import java.io.InputStream;
 import java.io.ByteArrayOutputStream;
-import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import org.json.JSONObject;
 
@@ -14,13 +13,11 @@ final class PaddleOcr {
     static { System.loadLibrary("local_paddle"); }
     private PaddleOcr(){}
     private static native byte[] nativeRecognize(AssetManager assets,Bitmap bitmap);
-    static String recognize(Context context,Bitmap bitmap)throws Exception{
+    static String recognize(Context context,Bitmap bitmap)throws Exception{return recognizeDocument(context,bitmap).text;}
+    static OcrDocument recognizeDocument(Context context,Bitmap bitmap)throws Exception{
         if(!BuildConfig.DEBUG)throw new IllegalStateException("比較OCRはデバッグ版専用です");
         verifyAssets(context.getAssets());
-        byte[] result=nativeRecognize(context.getAssets(),bitmap);
-        String text=new String(result,StandardCharsets.UTF_8);
-        if(text.length()>32000)throw new IllegalArgumentException("認識テキストが長すぎます。分割してください");
-        return text;
+        return OcrDocument.decode(nativeRecognize(context.getAssets(),bitmap));
     }
     static void verifyAssets(AssetManager assets)throws Exception{
         ByteArrayOutputStream buf=new ByteArrayOutputStream();

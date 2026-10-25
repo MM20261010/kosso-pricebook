@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
+#include <cstring>
+#include <cstdint>
 namespace localocr {
 static constexpr int SIDE=960, REC_HEIGHT=48, MAX_BOXES=80;
 Pipeline::Pipeline(){
@@ -54,7 +56,8 @@ static std::string text(ncnn::Net& net,const cv::Mat& crop,const std::vector<std
   if(result.size()>8192)throw std::runtime_error("line text limit");
  }return result;
 }
-std::string Pipeline::recognize(const cv::Mat& im){
+Document Pipeline::recognizeDocument(const cv::Mat& im){
+ Document document;document.width=im.cols;document.height=im.rows;
  if(im.empty()||im.type()!=CV_8UC3||im.cols<2||im.rows<2||(int64_t)im.cols*im.rows>4000000)throw std::runtime_error("image limit");
  if(keys.size()!=18385)throw std::runtime_error("dictionary size");
  float ratio=SIDE/(float)std::max(im.cols,im.rows);
@@ -82,7 +85,7 @@ std::string Pipeline::recognize(const cv::Mat& im){
   cv::warpPerspective(im,crop,cv::getPerspectiveTransform(box,dest),cv::Size(cw,ch),cv::INTER_CUBIC,cv::BORDER_REPLICATE);
   auto recognized=text(recognizer,crop,keys);if(!recognized.empty())words.push_back({box,recognized});
  }
- if(words.empty())return "";
+ if(words.empty())return document;
  std::vector<float> angles;for(const auto& word:words)angles.push_back(std::atan2(word.box[1].y-word.box[0].y,word.box[1].x-word.box[0].x));
  std::sort(angles.begin(),angles.end());float angle=angles[angles.size()/2];
  struct Row{float y,height;std::vector<std::pair<float,std::string>> parts;};std::vector<Row> rows;
@@ -95,6 +98,19 @@ std::string Pipeline::recognize(const cv::Mat& im){
  }
  std::sort(rows.begin(),rows.end(),[](const auto& a,const auto& b){return a.y<b.y;});std::string result;
  for(auto& row:rows){std::sort(row.parts.begin(),row.parts.end());if(!result.empty())result+='\n';for(size_t i=0;i<row.parts.size();i++){if(i)result+=' ';result+=row.parts[i].second;}if(result.size()>128000)throw std::runtime_error("receipt text limit");}
- return result;
+ document.text=std::move(result);document.regions=std::move(words);return document;
+}
+
+std::vector<unsigned char> encode(const Document& result){
+ std::vector<unsigned char> out;
+ auto u32=[&](uint32_t n){for(int i=0;i<4;i++)out.push_back((unsigned char)(n>>(i*8)));};
+ auto string=[&](const std::string& s,size_t limit){if(s.size()>limit)throw std::runtime_error("OCR payload limit");u32((uint32_t)s.size());out.insert(out.end(),s.begin(),s.end());};
+ u32(0x3642504b);u32(result.width);u32(result.height);string(result.text,128000);
+ if(result.regions.size()>MAX_BOXES)throw std::runtime_error("OCR regions limit");u32((uint32_t)result.regions.size());
+ for(const auto& word:result.regions){
+  if(word.box.size()!=4)throw std::runtime_error("OCR quadrilateral");
+  for(auto p:word.box)for(float v:{p.x,p.y}){if(!std::isfinite(v))throw std::runtime_error("OCR coordinate");uint32_t n;std::memcpy(&n,&v,4);u32(n);}
+  string(word.text,8192);if(out.size()>262144)throw std::runtime_error("OCR payload limit");
+ }return out;
 }
 }

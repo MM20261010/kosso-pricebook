@@ -52,6 +52,7 @@ public final class MainActivity extends Activity {
     private Uri cameraUri;
     private File cameraFile;
     private String reviewText="";
+    private OcrDocument paddleDocument,reviewDocument;
     private volatile boolean ocrRunning;
     private static final AtomicBoolean OCR_BUSY=new AtomicBoolean();
     private volatile boolean closing;
@@ -183,12 +184,12 @@ public final class MainActivity extends Activity {
         new AlertDialog.Builder(this).setTitle(store+" の購入価格推移").setMessage(result.toString()).setPositiveButton("閉じる",null).show();
     }
     private void startImagePick(){
-        if(ocrRunning){toast("読み取り中です。完了までお待ちください");return;}
+        if(OCR_BUSY.get()){toast("読み取り中です。完了までお待ちください");return;}
         Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);i.setType("image/*");i.addCategory(Intent.CATEGORY_OPENABLE);
         startActivityForResult(i,PICK_PHOTO);
     }
     private void startCamera(){
-        if(ocrRunning){toast("読み取り中です。完了までお待ちください");return;}
+        if(OCR_BUSY.get()){toast("読み取り中です。完了までお待ちください");return;}
         try{
             File folder=new File(getCacheDir(),"receipts");if(!folder.exists()&&!folder.mkdirs())throw new IllegalStateException("撮影場所を準備できません");
             cameraFile=File.createTempFile("private_receipt_",".jpg",folder);
@@ -204,7 +205,7 @@ public final class MainActivity extends Activity {
         if(comparisonImage!=null){comparisonImage.recycle();comparisonImage=null;}
     }
     private void showComparison(){
-        section("v0.5 端末内OCR比較");
+        section("v0.6 端末内OCR比較");
         hint("同じ展開画像を両方式で読み直せます。比較結果は購入履歴に自動保存しません。元テキストはこの画面内だけで確認できます。画面回転・終了で比較画像は破棄します。");
         RadioGroup engines=new RadioGroup(this);engines.setOrientation(RadioGroup.VERTICAL);
         for(String label:new String[]{"Tesseract","PaddleOCR v5 / ncnn"}){
@@ -216,7 +217,7 @@ public final class MainActivity extends Activity {
             Button reread=button("同じ画像を選択中の方式で読む",()->processReceipt(null,false));reread.setEnabled(!ocrRunning);content.addView(reread);
             Button discard=button("比較画像と両結果を破棄",()->{
                 if(ocrRunning){toast("読み取り完了までお待ちください");return;}
-                releaseComparisonImage();tesseractOriginal="";paddleOriginal="";tesseractStats="";paddleStats="";reviewText="";render();
+                releaseComparisonImage();tesseractOriginal="";paddleOriginal="";tesseractStats="";paddleStats="";reviewText="";paddleDocument=null;reviewDocument=null;render();
             });content.addView(discard);
         }
         if(ocrRunning)hint("端末内で読み取り中です。画像は送信していません。");
@@ -225,12 +226,14 @@ public final class MainActivity extends Activity {
             String stats=engine.equals("Tesseract")?tesseractStats:paddleStats;
             if(stats.isEmpty())continue;
             LinearLayout card=col();card.addView(text(engine,16,true,INK));card.addView(text(stats,12,false,MUTED));
-            ReceiptParser.Receipt parsed=ReceiptParser.parseReceipt(original);
+            OcrDocument document=engine.equals("Tesseract")?null:paddleDocument;
+            ReceiptParser.Receipt parsed=document==null?ReceiptParser.parseReceipt(original):ReceiptParser.parseDocument(document);
+            card.addView(text(document==null?"テキスト解析":"検出位置から明細を解析（"+document.regions.size()+"領域）",12,false,MUTED));
             StringBuilder candidates=new StringBuilder("抽出候補 "+parsed.items.size()+"件（未登録）\n");
-            for(ReceiptParser.Candidate c:parsed.items)candidates.append(c.name).append(" / 行金額 ").append(c.price).append("円 / 数量 ").append(c.quantity==null?"未確定":c.quantity).append('\n');
+            for(ReceiptParser.Candidate c:parsed.items)candidates.append(c.name).append(" / 行金額 ").append(c.price).append("円（").append(ReceiptParser.basisLabel(c.amountBasis)).append("） / 数量 ").append(c.quantity==null?"未確定":c.quantity).append('\n');
             card.addView(text(candidates.toString(),14,false,INK));
             TextView raw=text("元の認識テキスト：\n"+original,13,false,MUTED);raw.setTextIsSelectable(true);card.addView(raw);
-            Button show=button("この結果で確認・修正画面を開く",()->{if(ocrRunning){toast("読み取り中です");return;}selectedOcr=engine;reviewText=original;render();});card.addView(show);box(card);
+            Button show=button("この結果で確認・修正画面を開く",()->{if(ocrRunning){toast("読み取り中です");return;}selectedOcr=engine;reviewText=original;reviewDocument=document;render();});card.addView(show);box(card);
         }
         hint("時間はモデル検証・初期化とOCRを含み、画像展開は含みません。メモリは200ms間隔で採ったプロセスPSSの最大標本です。正確なネイティブピークやエンジン単独の使用量ではありません。");
     }
@@ -240,17 +243,18 @@ public final class MainActivity extends Activity {
         ocrRunning=true;
         final String engine=BuildConfig.DEBUG?selectedOcr:"Tesseract";
         final File sourcePhoto=deleteCachePhoto?cameraFile:null;
-        if(uri!=null){releaseComparisonImage();tesseractOriginal="";paddleOriginal="";tesseractStats="";paddleStats="";reviewText="";}
+        if(uri!=null){releaseComparisonImage();tesseractOriginal="";paddleOriginal="";tesseractStats="";paddleStats="";reviewText="";paddleDocument=null;reviewDocument=null;}
         tab=1;render();toast("端末内で文字を読み取っています");
         new Thread(()->{
-            String result=null,error=null;long elapsed=0,peak=0;
+            String result=null,error=null;OcrDocument document=null;long elapsed=0,peak=0;
             OcrMemory memory=null;
             try{
                 if(uri!=null){Bitmap decoded=ReceiptOcr.decodeScaled(this,uri);synchronized(this){comparisonImage=decoded;}}
                 Bitmap image=comparisonImage;
                 if(image==null||image.isRecycled())throw new IllegalArgumentException();
                 memory=new OcrMemory();long start=SystemClock.elapsedRealtime();
-                result=engine.equals("Tesseract")?ReceiptOcr.recognize(this,image):PaddleOcr.recognize(this,image);
+                if(engine.equals("Tesseract"))result=ReceiptOcr.recognize(this,image);
+                else{document=PaddleOcr.recognizeDocument(this,image);result=document.text;}
                 elapsed=SystemClock.elapsedRealtime()-start;memory.close();peak=memory.maximumKb();
             }catch(OutOfMemoryError e){error="メモリが不足しました。画像を小さくするか分割してください。";}
             catch(Exception|LinkageError e){error="読み取れませんでした。画像を小さくするか分割して、もう一度お試しください。";}
@@ -259,27 +263,30 @@ public final class MainActivity extends Activity {
                 ocrRunning=false;OCR_BUSY.set(false);if(closing)releaseComparisonImage();
             }
             final String output=result==null?"":result.trim(),fail=error;
+            final OcrDocument recognizedDocument=document;
             final String stats=String.format(Locale.JAPAN,"読取 %.2f秒 / プロセスPSS最大標本 ",elapsed/1000.0)+(peak>0?String.format(Locale.JAPAN,"%.1f MiB",peak/1024.0):"未取得");
             runOnUiThread(()->{
                 if(closing||isFinishing()||isDestroyed())return;
                 if(fail!=null){render();new AlertDialog.Builder(this).setTitle("OCRを実行できませんでした").setMessage(fail+"\n画像・認識内容は送信していません。手入力も使えます。").setPositiveButton("閉じる",null).show();return;}
                 selectedOcr=engine;
-                if(engine.equals("Tesseract")){tesseractOriginal=output;tesseractStats=stats;}else{paddleOriginal=output;paddleStats=stats;}
-                reviewText=output;if(output.isEmpty())toast("文字が見つかりませんでした。明るい場所で撮影し直してください");render();
+                if(engine.equals("Tesseract")){tesseractOriginal=output;tesseractStats=stats;}else{paddleOriginal=output;paddleStats=stats;paddleDocument=recognizedDocument;}
+                reviewText=output;reviewDocument=recognizedDocument;if(output.isEmpty())toast("文字が見つかりませんでした。明るい場所で撮影し直してください");render();
             });
         },"local-receipt-ocr").start();
     }
     private void showOcrReview(){
         section("OCR候補を1件ずつ確認");
-        hint("全候補は未選択です。行金額は単価とは限りません。商品名・数量・税込単価・税率を確認した商品だけチェックしてください。※や軽の印だけでは税率を確定しません。");
-        ReceiptParser.Receipt receipt=ReceiptParser.parseReceipt(reviewText);
+        hint("全候補は未選択です。行金額は単価とは限りません。商品名・数量・税込単価・税率を確認した商品だけチェックしてください。C/V・※や軽の印だけでは税率を確定しません。");
+        ReceiptParser.Receipt receipt=reviewDocument==null?ReceiptParser.parseReceipt(reviewText):ReceiptParser.parseDocument(reviewDocument);
+        hint(reviewDocument==null?"テキストから解析中。編集・画面再生成後は座標を使いません。画像を選び直すと位置付きで再認識できます。":"検出位置を使って商品名・金額・隣接する数量行を組み立てています。");
         content.addView(text("店名（未認識なら入力）",13,true,INK));
         EditText store=edit("店名（必須）",receipt.store,InputType.TYPE_CLASS_TEXT);content.addView(store);
         content.addView(text("購入日（未認識なら入力）",13,true,INK));
         EditText date=edit("YYYY-MM-DD",receipt.date,InputType.TYPE_CLASS_DATETIME);content.addView(date);
         hint(receipt.reconciliation());
         for(String warning:receipt.warnings)hint("要確認："+warning);
-        if(receipt.taxAmount!=null)hint("印字された税額："+receipt.taxAmount+"円（各商品の税率・税込単価とは別です）");
+        if(receipt.taxAmount!=null)hint((receipt.taxAmountFromBreakdown?"印字税額内訳の合算：":"印字された税額合計：")+receipt.taxAmount+"円（各商品の税率・税込単価とは別です）");
+        for(ReceiptParser.TaxBreakdown b:receipt.taxBreakdowns)hint("印字税区分 "+b.rate+"%：対象額 "+(b.base==null||b.uncertain?"未確定":b.base+"円")+" / 税額 "+(b.tax==null||b.uncertain?"未確定":b.tax+"円")+"。各商品への割当・端数処理は推測しません。");
         List<ReceiptParser.Candidate> parsed=receipt.items;
         List<EditText> names=new ArrayList<>(),prices=new ArrayList<>(),quantities=new ArrayList<>(),taxes=new ArrayList<>();
         List<CheckBox> include=new ArrayList<>(),sale=new ArrayList<>();
@@ -287,14 +294,17 @@ public final class MainActivity extends Activity {
         for(ReceiptParser.Candidate candidate:parsed){
             LinearLayout card=col();
             TextView raw=text("原文："+candidate.raw,14,false,MUTED);card.addView(raw);
-            card.addView(text("行金額："+candidate.price+"円 / 印字単価："+(candidate.unitPrice==null?"未確定":candidate.unitPrice+"円（税区分要確認）"),14,true,INK));
+            card.addView(text("行金額："+candidate.price+"円 / 印字単価："+(candidate.unitPrice==null?"未確定":candidate.unitPrice+"円（"+ReceiptParser.basisLabel(candidate.amountBasis)+"）"),14,true,INK));
+            card.addView(text("行金額の区分："+ReceiptParser.basisLabel(candidate.amountBasis)+(candidate.markers.isEmpty()?"":" / 印："+candidate.markers+"（意味未確認）"),13,false,MUTED));
+            if(candidate.nameSuffixUncertain)card.addView(text("末尾C/Vは印か商品名の一部か未確定です。原文を確認して修正してください。",13,false,MUTED));
             card.addView(text("商品名",13,false,MUTED));
             EditText name=edit("商品名",candidate.name,InputType.TYPE_CLASS_TEXT);card.addView(name);
             card.addView(text("購入数量（規格・内容量とは別）",13,false,MUTED));
             EditText quantity=edit("未確定",candidate.quantity==null?"":candidate.quantity.toString(),InputType.TYPE_CLASS_NUMBER);card.addView(quantity);
             card.addView(text("税込単価（1個分・値引後）",13,false,MUTED));
             EditText price=edit("行金額から自動確定しません","",InputType.TYPE_CLASS_NUMBER);card.addView(price);
-            card.addView(button("行金額を税込合計と確認して単価計算",()->{
+            if(candidate.amountBasis==ReceiptParser.AmountBasis.EXCLUSIVE)card.addView(text("税抜の行金額は税込単価へ自動換算しません。税率・端数・割引の扱いを確認して手入力してください。",13,false,MUTED));
+            else card.addView(button("行金額を税込合計と確認して単価計算",()->{
                 try{
                     int q=Integer.parseInt(quantity.getText().toString().trim());
                     if(q<1||q>999)throw new IllegalArgumentException();
@@ -324,7 +334,7 @@ public final class MainActivity extends Activity {
                         p.gross=Long.parseLong(prices.get(n).getText().toString().trim());p.quantity=Integer.parseInt(quantities.get(n).getText().toString().trim());
                         p.tax=Double.parseDouble(taxes.get(n).getText().toString().trim());p.sale=sale.get(n).isChecked();p.size=0;p.unit="";
                         if(p.name.isEmpty()||p.name.length()>120||p.gross<1||p.gross>1_000_000||p.quantity<1||p.quantity>999||!Double.isFinite(p.tax)||p.tax<0||p.tax>100)throw new IllegalArgumentException();
-                        selectedSum+=p.gross*p.quantity;if(p.gross*p.quantity!=parsed.get(n).price)changedLineAmount=true;list.add(p);
+                        selectedSum+=p.gross*p.quantity;if(parsed.get(n).amountBasis!=ReceiptParser.AmountBasis.EXCLUSIVE&&p.gross*p.quantity!=parsed.get(n).price)changedLineAmount=true;list.add(p);
                     }
                     if(list.isEmpty()){toast("確認した商品にチェックを入れてください");return;}
                     String comparison=receipt.total==null?"レシート総額は未確定です。":
@@ -334,7 +344,7 @@ public final class MainActivity extends Activity {
                     new AlertDialog.Builder(this).setTitle(list.size()+"件の確認済み商品を保存しますか？")
                         .setMessage(comparison+"\n"+receipt.reconciliation()+"\n同じレシートの二重登録に注意してください。")
                         .setNegativeButton("戻って修正",null).setPositiveButton("確認して保存",(d,w)->{
-                            try{db.addPurchases(list);lastStore=shop;lastDate=purchaseDate;reviewText="";
+                            try{db.addPurchases(list);lastStore=shop;lastDate=purchaseDate;reviewText="";reviewDocument=null;
                                 toast(list.size()+"件を端末内に保存しました");render();}
                             catch(Exception e){toast("保存できませんでした。入力を確認してください。");}
                         }).show();
@@ -343,14 +353,14 @@ public final class MainActivity extends Activity {
         }
         section("集計・税・支払などの除外行");
         StringBuilder excluded=new StringBuilder();
-        for(ReceiptParser.Line line:receipt.lines)if(line.kind!=ReceiptParser.Kind.ITEM&&line.kind!=ReceiptParser.Kind.OTHER)
+        for(ReceiptParser.Line line:receipt.lines)if(line.kind!=ReceiptParser.Kind.ITEM&&line.kind!=ReceiptParser.Kind.ITEM_DETAIL&&line.kind!=ReceiptParser.Kind.OTHER)
             excluded.append(line.kind).append("：").append(line.raw).append('\n');
         hint(excluded.length()==0?"分類できない行もあります。原文と候補を照合してください。":excluded.toString());
         section("認識テキストの修正・再解析");
         hint("再解析や画面切替では、この画面で編集した明細は引き継がれません。保存前に確認してください。");
         EditText raw=new EditText(this);raw.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(32000)});raw.setText(reviewText);raw.setSingleLine(false);raw.setMinLines(4);raw.setMaxLines(8);raw.setTextSize(13);content.addView(raw);
-        content.addView(button("このテキストで再解析",()->{reviewText=raw.getText().toString();render();}));
-        content.addView(button("このOCR結果を破棄",()->{reviewText="";render();}));
+        content.addView(button("このテキストで再解析",()->{reviewText=raw.getText().toString();reviewDocument=null;render();}));
+        content.addView(button("このOCR結果を破棄",()->{reviewText="";reviewDocument=null;render();}));
     }
     private void showAdmin(){
         section("データは端末内だけ");
@@ -364,7 +374,7 @@ public final class MainActivity extends Activity {
         content.addView(button("JSONを復元（現在の記録と置換）",()->{
             Intent intent=new Intent(Intent.ACTION_OPEN_DOCUMENT);intent.addCategory(Intent.CATEGORY_OPENABLE);intent.setType("application/json");startActivityForResult(intent,RESTORE_BACKUP);
         }));
-        section("試作版 v0.5 OCR比較 / 予定");
+        section("試作版 v0.6 OCR比較 / 予定");
         hint("✅ 買い物メモと店舗別の前回税込価格\n✅ レシート撮影・端末内OCR候補・まとめて保存の実装\n✅ 履歴と前回比、手入力・バックアップ\n✅ 自動バックアップなし・外部送信なし\n⌛ Android実機でのOCR精度・APK検証\n⌛ 同一商品の表記ゆれ学習\n⌛ 内容量・100g単価比較画面\n⌛ 減税制度確定後の税率更新");
         hint("F-Droid申請前の開発用ビルドです。公式掲載はまだ行っていません。");
     }
@@ -407,5 +417,5 @@ public final class MainActivity extends Activity {
         state.putString("review_text",reviewText);
         super.onSaveInstanceState(state);
     }
-    @Override protected void onDestroy(){closing=true;if(!ocrRunning)releaseComparisonImage();db.close();super.onDestroy();}
+    @Override protected void onDestroy(){closing=true;if(!ocrRunning)releaseComparisonImage();paddleDocument=null;reviewDocument=null;db.close();super.onDestroy();}
 }
