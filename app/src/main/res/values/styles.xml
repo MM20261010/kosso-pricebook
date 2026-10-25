@@ -1,0 +1,10 @@
+<resources>
+    <style name="PricebookTheme" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:statusBarColor">#F4F7F5</item>
+        <item name="android:navigationBarColor">#F4F7F5</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:colorAccent">#0B6857</item>
+    </style>
+</resources>
