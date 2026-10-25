@@ -4,6 +4,7 @@ import hashlib
 import os
 import json
 import struct
+import tempfile
 from pathlib import Path
 import re
 import subprocess
@@ -68,6 +69,15 @@ with zipfile.ZipFile(apk) as archive:
         raise SystemExit('Unexpected Paddle ABI set')
     for name in libs:
         data = archive.read(name)
+        readelf = Path(sdk) / 'ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf'
+        with tempfile.TemporaryDirectory() as temp:
+            lib = Path(temp) / 'liblocal_paddle.so'
+            lib.write_bytes(data)
+            symbols = subprocess.run([str(readelf), '--dyn-syms', '--wide', str(lib)],
+                                     check=True, capture_output=True, text=True).stdout
+            network_api = r'\bUND\s+(?:socket|connect|send|sendto|sendmsg|recv|recvfrom|recvmsg|getaddrinfo|execve|system)(?:@|\s|$)'
+            if re.search(network_api, symbols):
+                raise SystemExit('Unexpected network/process API import: ' + name)
         if data[:4] != b'\x7fELF' or data[5] != 1:
             raise SystemExit('Expected little endian ELF')
         bits = data[4]
@@ -93,6 +103,7 @@ with zipfile.ZipFile(apk) as archive:
                 relro = True
         if not stack or not relro:
             raise SystemExit('Missing NX stack/RELRO: ' + name)
+    print('PASS Paddle has no imported network/process launch APIs')
     print('PASS Paddle ABIs, ELF NX stack/RELRO, no writable executable segments and 16K alignment')
 print('APK bytes: ' + str(apk.stat().st_size))
 print('APK SHA-256: ' + hashlib.sha256(apk.read_bytes()).hexdigest())

@@ -63,7 +63,7 @@ std::string Pipeline::recognize(const cv::Mat& im){
  if(ex.input("in0",x)||ex.extract("out0",out)||out.w!=SIDE||out.h!=SIDE||out.c!=1)throw std::runtime_error("detector shape");}
  cv::Mat map(h,w,CV_32F,(void*)out.data,SIDE*sizeof(float)),binary;
  cv::compare(map,.3,binary,cv::CMP_GT);std::vector<std::vector<cv::Point>> contours;cv::findContours(binary,contours,cv::RETR_LIST,cv::CHAIN_APPROX_SIMPLE);
- std::vector<Word> words;
+ std::vector<Word> words;int regions=0;
  for(size_t i=0;i<std::min<size_t>(1000,contours.size());i++){
   if(contours[i].size()<3)continue;
   auto rect=cv::minAreaRect(contours[i]);if(std::min(rect.size.width,rect.size.height)<3)continue;auto box=mini(rect);
@@ -77,10 +77,10 @@ std::string Pipeline::recognize(const cv::Mat& im){
   for(auto& p:box){p.x=std::clamp(std::round(p.x/w*im.cols),0.f,(float)im.cols-1);p.y=std::clamp(std::round(p.y/h*im.rows),0.f,(float)im.rows-1);}
   int cw=(int)std::max(cv::norm(box[0]-box[1]),cv::norm(box[2]-box[3]));int ch=(int)std::max(cv::norm(box[0]-box[3]),cv::norm(box[1]-box[2]));
   if(cw<2||ch<2)continue;
+  if(++regions>MAX_BOXES)throw std::runtime_error("too many text boxes; split receipt");
   std::vector<cv::Point2f> dest={{0,0},{(float)cw,0},{(float)cw,(float)ch},{0,(float)ch}};cv::Mat crop;
   cv::warpPerspective(im,crop,cv::getPerspectiveTransform(box,dest),cv::Size(cw,ch),cv::INTER_CUBIC,cv::BORDER_REPLICATE);
   auto recognized=text(recognizer,crop,keys);if(!recognized.empty())words.push_back({box,recognized});
-  if(words.size()>MAX_BOXES)throw std::runtime_error("too many text boxes; split receipt");
  }
  if(words.empty())return "";
  std::vector<float> angles;for(const auto& word:words)angles.push_back(std::atan2(word.box[1].y-word.box[0].y,word.box[1].x-word.box[0].x));
