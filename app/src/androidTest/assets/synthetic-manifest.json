@@ -1,0 +1,102 @@
+{
+  "synthetic_only": true,
+  "font_sha256": "b76b0433203017ca80401b2ee0dd69350349871c4b19d504c34dbdd80541690a",
+  "fixtures": [
+    {
+      "id": "simple-clean",
+      "image": "simple-clean.png",
+      "items": [
+        "牛乳 1L",
+        "食パン 6枚",
+        "豆腐 300g"
+      ],
+      "line_amounts": [
+        218,
+        158,
+        88
+      ],
+      "date": "2026-10-20",
+      "sha256": "5f5cbe455b94fb42369acd10a93295f345322c956f02f1ec3627d365a28633d7"
+    },
+    {
+      "id": "simple-shadow_skew",
+      "image": "simple-shadow_skew.png",
+      "items": [
+        "牛乳 1L",
+        "食パン 6枚",
+        "豆腐 300g"
+      ],
+      "line_amounts": [
+        218,
+        158,
+        88
+      ],
+      "date": "2026-10-20",
+      "sha256": "94cdb2f22bc89f35c2faa6f0832824af0a1b7e9d6acd4d8a46fc43ad9ea861a3"
+    },
+    {
+      "id": "simple-faded",
+      "image": "simple-faded.png",
+      "items": [
+        "牛乳 1L",
+        "食パン 6枚",
+        "豆腐 300g"
+      ],
+      "line_amounts": [
+        218,
+        158,
+        88
+      ],
+      "date": "2026-10-20",
+      "sha256": "c0ff311e29997b9ed4d721a3f9cc804d2ff7b068e23085636408b32dd88fae1c"
+    },
+    {
+      "id": "multiline-clean",
+      "image": "multiline-clean.png",
+      "items": [
+        "りんご",
+        "にんじん",
+        "台所洗剤"
+      ],
+      "line_amounts": [
+        200,
+        300,
+        330
+      ],
+      "date": "2026-10-21",
+      "sha256": "be8ea2d854e92092a3bd28db326db571271d6642376ead55e275f2fe02de2fe5"
+    },
+    {
+      "id": "discount-clean",
+      "image": "discount-clean.png",
+      "items": [
+        "ヨーグルト 400g",
+        "納豆 3個",
+        "緑茶 500ml"
+      ],
+      "line_amounts": [
+        198,
+        108,
+        128
+      ],
+      "date": "2026-10-22",
+      "sha256": "f1738d66f4259b21dcbdeb707fa57460b392cae3e341678e9f9f1698d776777b"
+    },
+    {
+      "id": "mixed_tax-clean",
+      "image": "mixed_tax-clean.png",
+      "items": [
+        "おにぎり",
+        "ミネラル水 2L",
+        "ごみ袋 20枚"
+      ],
+      "line_amounts": [
+        129,
+        108,
+        220
+      ],
+      "date": "2026-10-23",
+      "sha256": "d6c7ef4b94025b8f2ec20ec33035f81c0879226b9bde457a9790207df1ff2c54"
+    }
+  ]
+}

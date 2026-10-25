@@ -41,7 +41,7 @@ public final class ReceiptParser {
     }
     private static final String MONEY="(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,7})";
     private static final Pattern AMOUNT=Pattern.compile("^(.*?)\\s*[¥]?(-?"+MONEY+")\\s*円?\\s*(?:(8|10)\\s*%|([*※軽外内非]))?$");
-    private static final Pattern DATE=Pattern.compile("(?<![0-9])(20[0-9]{2})[年/.-]\\s*([0-9]{1,2})[月/.-]\\s*([0-9]{1,2})日?(?![0-9])");
+    private static final Pattern DATE=Pattern.compile("(?<![0-9])(20[0-9]{2})[年/.-]\\s*([0-9]{1,2})[月/.-]\\s*((?>[0-9]{1,2}))日?(?:(?![0-9])|(?=(?:[01][0-9]|2[0-3]):[0-5][0-9](?::[0-5][0-9])?(?![0-9])))");
     private static final Pattern COUNT=Pattern.compile("(?:^|\\s)([0-9]{1,3})\\s*(?:個|点|本|袋|枚|パック)(?=\\s|$|[×xX])");
     private static final Pattern UNIT=Pattern.compile("(?:@|単価\\s*|[¥])("+MONEY+")\\s*円?\\s*[×xX]\\s*([0-9]{1,3})");
     private static final Pattern NAMED_UNIT=Pattern.compile("(?:^|\\s)単価\\s*[¥]?("+MONEY+")円?");

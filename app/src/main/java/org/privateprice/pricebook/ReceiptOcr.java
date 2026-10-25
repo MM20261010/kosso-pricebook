@@ -18,6 +18,11 @@ import java.io.InputStream;
 final class ReceiptOcr {
     private ReceiptOcr(){}
     static String recognize(Context context, Uri uri) throws Exception {
+        Bitmap image=decodeScaled(context,uri);
+        try{return recognize(context,image);}finally{image.recycle();}
+    }
+    static String recognize(Context context, Bitmap image) throws Exception {
+        if(image==null||image.isRecycled())throw new IllegalArgumentException("画像がありません");
         File privateRoot=new File(context.getFilesDir(),"ocr-data");
         File tessdata=new File(privateRoot,"tessdata");
         if(!tessdata.exists()&&!tessdata.mkdirs())throw new IllegalStateException("OCRモデル保存場所を作れません");
@@ -32,8 +37,6 @@ final class ReceiptOcr {
                 if(!part.renameTo(output))throw new IllegalStateException("OCRモデルコピー失敗");
             }
         }
-        Bitmap image=decodeScaled(context,uri);
-        if(image==null)throw new IllegalArgumentException("画像の読み込みに失敗しました");
         TessBaseAPI api=new TessBaseAPI();Bitmap corrected=null;
         try {
             if(!api.init(privateRoot.getAbsolutePath(),"jpn+eng"))throw new IllegalStateException("OCR初期化に失敗しました");
@@ -47,7 +50,7 @@ final class ReceiptOcr {
                 if(quality>bestScore){best=candidate;bestScore=quality;}
             }
             return best;
-        } finally {api.recycle();if(corrected!=null)corrected.recycle();image.recycle();}
+        } finally {api.recycle();if(corrected!=null)corrected.recycle();}
     }
     private static String read(TessBaseAPI api,Bitmap bitmap,int mode){
         api.clear();api.setPageSegMode(mode);api.setImage(bitmap);
@@ -79,7 +82,12 @@ final class ReceiptOcr {
         canvas.translate(-cw/2f-crop[0],-ch/2f-crop[1]);
         canvas.drawBitmap(normalized,0,0,new Paint(Paint.FILTER_BITMAP_FLAG));normalized.recycle();return out;
     }
-    private static Bitmap decodeScaled(Context context,Uri uri)throws Exception{
+    private static Bitmap opaque(Bitmap bitmap){
+        if(!bitmap.hasAlpha())return bitmap;
+        Bitmap output=Bitmap.createBitmap(bitmap.getWidth(),bitmap.getHeight(),Bitmap.Config.ARGB_8888);
+        Canvas canvas=new Canvas(output);canvas.drawColor(Color.WHITE);canvas.drawBitmap(bitmap,0,0,null);bitmap.recycle();return output;
+    }
+    static Bitmap decodeScaled(Context context,Uri uri)throws Exception{
         BitmapFactory.Options options=new BitmapFactory.Options();options.inJustDecodeBounds=true;
         try(InputStream in=context.getContentResolver().openInputStream(uri)){BitmapFactory.decodeStream(in,null,options);}
         if(options.outWidth<=0||options.outHeight<=0)throw new IllegalArgumentException("画像形式に未対応です");
@@ -94,9 +102,9 @@ final class ReceiptOcr {
             int orientation=new ExifInterface(in).getAttributeInt(ExifInterface.TAG_ORIENTATION,ExifInterface.ORIENTATION_NORMAL);
             switch(orientation){case ExifInterface.ORIENTATION_FLIP_HORIZONTAL:mirror=true;break;case ExifInterface.ORIENTATION_FLIP_VERTICAL:mirror=true;degrees=180;break;case ExifInterface.ORIENTATION_TRANSPOSE:mirror=true;degrees=90;break;case ExifInterface.ORIENTATION_TRANSVERSE:mirror=true;degrees=270;break;case ExifInterface.ORIENTATION_ROTATE_90:degrees=90;break;case ExifInterface.ORIENTATION_ROTATE_180:degrees=180;break;case ExifInterface.ORIENTATION_ROTATE_270:degrees=270;break;default:break;}
         }catch(Exception ignore){ /* Missing/corrupt EXIF should not block basic OCR. */ }
-        if(degrees==0&&!mirror)return bitmap;
+        if(degrees==0&&!mirror)return opaque(bitmap);
         Matrix matrix=new Matrix();if(mirror)matrix.postScale(-1,1);matrix.postRotate(degrees);
         Bitmap rotated=Bitmap.createBitmap(bitmap,0,0,bitmap.getWidth(),bitmap.getHeight(),matrix,true);
-        bitmap.recycle();return rotated;
+        bitmap.recycle();return opaque(rotated);
     }
 }

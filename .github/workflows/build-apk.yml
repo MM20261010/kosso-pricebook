@@ -6,6 +6,7 @@ permissions:
 jobs:
   debug-apk:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - name: Set up JDK 17
@@ -17,12 +18,15 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
       - name: Android SDK
         uses: android-actions/setup-android@v4
         with:
           packages: 'platform-tools'
       - name: Install SDK 35
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018" "cmake;3.22.1"
       - name: Run parser and calculations tests
         run: |
           sh tests/test-price-math.sh
@@ -31,14 +35,51 @@ jobs:
           sh tests/privacy-sanity.sh
       - name: Embed offline Japanese and English OCR models
         run: sh scripts/fetch-ocr-models.sh
+      - name: Prepare verified native math sources
+        run: python3 scripts/prepare-native.py
+      - name: Prepare verified offline Paddle models
+        run: python3 scripts/prepare-paddle.py
       - name: Assemble debug APK
-        run: gradle :app:assembleDebug :app:lintDebug --no-daemon
+        run: gradle :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug --no-daemon --max-workers=2
       - name: Verify debug APK privacy and integrity
         run: python3 scripts/verify-debug-apk.py
       - name: Upload test APK
         uses: actions/upload-artifact@v4
         with:
-          name: kosso-pricebook-debug-v0.4
+          name: kosso-pricebook-debug-v0.5
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
+
+      - name: Upload synthetic instrumentation APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: kosso-pricebook-v0.5-synthetic-tests
+          path: app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+          if-no-files-found: error
+          retention-days: 14
+  android-smoke:
+    needs: debug-apk
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools'
+      - name: Install AOSP emulator
+        run: sdkmanager 'emulator' 'system-images;android-35;default;x86_64'
+      - uses: actions/download-artifact@v4
+        with:
+          name: kosso-pricebook-debug-v0.5
+          path: apk
+      - uses: actions/download-artifact@v4
+        with:
+          name: kosso-pricebook-v0.5-synthetic-tests
+          path: test-apk
+      - name: Test local OCRs and JSON compatibility with synthetic receipts
+        run: bash scripts/android-smoke.sh apk/app-debug.apk test-apk/app-debug-androidTest.apk

@@ -1,6 +1,8 @@
-# こっそり価格帳 (Kosso Pricebook) · Android試作 v0.4
+# こっそり価格帳 (Kosso Pricebook) · Android試作 v0.5 OCR比較
 
-**v0.3の実機OCRで重大な誤候補が発生したため、v0.4で画像補正・保守的解析・確認画面を改善しました。v0.4の実機精度は未検証です。**
+**TesseractとPP-OCRv5 Mobile＋ncnn FP32を同じ端末内画像で比較するデバッグ版です。正式採用前の実機評価用で、v0.5の実機精度は未検証です。**
+
+[v0.5の比較手順・モデル出所・ライセンス・検査記録](docs/ocr-v05-validation.md)を参照してください。
 
 買い物前にメモを作成し、店内では過去の店別購入価格を確認。帰宅後はレシートを端末内OCRで読み取って、購入明細を一括保存し、次回の買い物に使います。
 
@@ -16,7 +18,7 @@
 - 手入力、SQLite保存・個別履歴削除、JSONバックアップ・復元
 
 ## ビルドと検証
-JDK 17、Android SDK 35、Gradle 8.11.1、Android Gradle Plugin 8.9.2 を想定。
+JDK 17、Android SDK 35、Gradle 8.11.1、Android Gradle Plugin 8.9.2、NDK 27.2.12479018、CMake 3.22.1、モデル変換用Python 3.12 を使用。
 
 ```sh
 sh tests/test-price-math.sh
@@ -24,6 +26,8 @@ sh tests/test-parser.sh
 sh tests/test-ocr-image.sh
 sh tests/privacy-sanity.sh
 sh scripts/fetch-ocr-models.sh
+python3 scripts/prepare-native.py
+python3 scripts/prepare-paddle.py
 gradle :app:assembleDebug --no-daemon
 ```
 

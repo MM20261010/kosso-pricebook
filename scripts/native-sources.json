@@ -1,0 +1,32 @@
+{
+  "ncnn_version": "20261020",
+  "opencv_version": "4.14.0",
+  "opencv_commit": "0654a42e19215ef25b1d367d822f3c630447e7c7",
+  "clipper_commit": "f998920369565dca56d346bb30c5741e273f0b9b",
+  "sources": [
+    {
+      "name": "ncnn",
+      "url": "https://codeload.github.com/Tencent/ncnn/tar.gz/refs/tags/20261020",
+      "sha256": "968d8d8e65ccadc803322f8238736176e0f9c929fcf484895f58a63e6b227127",
+      "archive": true
+    },
+    {
+      "name": "opencv",
+      "url": "https://codeload.github.com/opencv/opencv/tar.gz/0654a42e19215ef25b1d367d822f3c630447e7c7",
+      "sha256": "7a75663094ebd50bf212928423a24394e29d751db878044ad015ba28546a59db",
+      "archive": true
+    },
+    {
+      "name": "clipper.cpp",
+      "url": "https://raw.githubusercontent.com/fonttools/pyclipper/f998920369565dca56d346bb30c5741e273f0b9b/src/clipper.cpp",
+      "sha256": "5c642a3668311701f72572443aa42c1a981edb037298efc015166d9d90be0755",
+      "archive": false
+    },
+    {
+      "name": "clipper.hpp",
+      "url": "https://raw.githubusercontent.com/fonttools/pyclipper/f998920369565dca56d346bb30c5741e273f0b9b/src/clipper.hpp",
+      "sha256": "734eba9dc9d399089b2b467017074bd24728a1b9e64c7429e827806ed10e54cc",
+      "archive": false
+    }
+  ]
+}

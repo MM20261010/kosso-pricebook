@@ -7,3 +7,7 @@ local.properties
 *.jks
 .idea/
 app/src/main/assets/tessdata/*.traineddata
+.native-deps/
+app/.cxx/
+app/src/main/assets/paddle/
+**/__pycache__/

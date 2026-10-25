@@ -37,6 +37,14 @@ public final class ReceiptParserTest {
     check(receipt("牛乳\n\n200").items.isEmpty(),"空行越しの金額だけの誤結合を防ぐ");
     check(receipt("牛乳 - 200\n豆腐 △ 80").items.isEmpty(),"空白付き負金額");
     r=receipt("りんご\n数量2点 200※");check(r.items.size()==1&&r.items.get(0).quantity==2,"数量見出し付き継続行");
+    check(receipt("2026/10/2017:35").date.equals("2026-10-20"),"連結した日付と24時間時刻");
+    check(receipt("2026-10-2219:40").date.equals("2026-10-22"),"ハイフン連結日付");
+    check(receipt("2026/10/217:35").date.isEmpty(),"1桁日か1桁時刻か曖昧なら未確定");
+    check(receipt("2026/10/201234").date.isEmpty(),"数字列だけから時刻を推測しない");
+    check(receipt("2026/10/2024:00").date.isEmpty(),"不正24時");
+    check(receipt("2026/10/2017:355").date.isEmpty(),"3桁の分を拒否");
+    check(receipt("2026/02/3017:35").date.isEmpty(),"連結時も実在日を確認");
+    check(receipt("2026/10/2017:35\n2026/10/2118:00").date.isEmpty(),"連結した複数日付の矛盾");
     System.out.println("PASS ReceiptParser "+checks+" checks (synthetic receipts only)");
   }
 }

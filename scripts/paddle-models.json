@@ -1,0 +1,54 @@
+{
+  "models": {
+    "PP-OCRv5_mobile_det": {
+      "revision": "0d63e78e2b680928f6b1747d76a08db6e645efb7",
+      "license": "apache-2.0",
+      "files": [
+        {
+          "file": "inference.json",
+          "sha256": "05feef1acb00aa4cd7362b15f7f501fc4f99d7b1fa73c1c871e0c7b1504b0f5c",
+          "url": "https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_det/resolve/0d63e78e2b680928f6b1747d76a08db6e645efb7/inference.json"
+        },
+        {
+          "file": "inference.pdiparams",
+          "sha256": "afa1820cb16c1fd0dad589d0f8b389139061c1ef6d68019685fd07be997dda5b",
+          "url": "https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_det/resolve/0d63e78e2b680928f6b1747d76a08db6e645efb7/inference.pdiparams"
+        },
+        {
+          "file": "inference.yml",
+          "sha256": "98069072e1b6b37d727fd9d9f11725faa46d6ea0de012f2ed26caea011c37699",
+          "url": "https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_det/resolve/0d63e78e2b680928f6b1747d76a08db6e645efb7/inference.yml"
+        }
+      ]
+    },
+    "PP-OCRv5_mobile_rec": {
+      "revision": "682f20538d8c086cb2128e5cfac775e6c4904e85",
+      "license": "apache-2.0",
+      "files": [
+        {
+          "file": "inference.json",
+          "sha256": "24587345250c7332d0fc6f9a44e794d078cdaeb64c302fef906f325619de2569",
+          "url": "https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_rec/resolve/682f20538d8c086cb2128e5cfac775e6c4904e85/inference.json"
+        },
+        {
+          "file": "inference.pdiparams",
+          "sha256": "2460da90875937c94db97eba74ae3d9e5d4c4c57c42f1f41531c09a26bcc771a",
+          "url": "https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_rec/resolve/682f20538d8c086cb2128e5cfac775e6c4904e85/inference.pdiparams"
+        },
+        {
+          "file": "inference.yml",
+          "sha256": "5dfeb2777f6d0db8177d8128a8acfcf6e6276dc4ac73ea3bf0dc06d6a5e85d8e",
+          "url": "https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_rec/resolve/682f20538d8c086cb2128e5cfac775e6c4904e85/inference.yml"
+        }
+      ]
+    }
+  },
+  "paddle": "3.3.1",
+  "paddle2onnx": "2.1.0",
+  "pnnx_version": "20261020",
+  "pnnx_wheel": {
+    "url": "https://files.pythonhosted.org/packages/5c/b7/9665ea73f6503fea4f30abbd3eebcea1c8500095496167761a15482354bc/pnnx-20261020-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+    "sha256": "d50d921e5897293d616444191c1a2dc5366423c81bdb4bd22a985fe8071cf17c",
+    "executable_sha256": "4db234cb90a27dc15e04e0d0edf5706c7a488ab8e6235cf8c146c6ec80fd9355"
+  }
+}
