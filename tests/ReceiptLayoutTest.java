@@ -81,6 +81,7 @@ public final class ReceiptLayoutTest {
         r=text("牛乳200 8% 10%");check(r.items.get(0).taxRate==null&&!r.warnings.isEmpty(),"conflicting printed rates stay unknown");
         r=text("牛乳\n@100×2\n@150×2 300C");check(r.items.get(0).quantity==null&&r.items.get(0).unitPrice==null,"pending and inline detail conflicts stay unknown");
         check(text("牛乳100.50").items.isEmpty(),"decimal price not misread as integer suffix");
+        r=text("小豆 200\n小麦 300\n内臓 400\n総菜 500\n合計1400");check(r.items.size()==4&&r.itemSum()==1400,"short product names resembling aggregates are preserved");
         OcrDocument decoded=OcrDocument.decode(encoded());check(decoded.regions.size()==1&&ReceiptParser.parseDocument(decoded).itemSum()==200,"binary document decoding reaches parser");
         byte[] bad=encoded();rejects(()->OcrDocument.decode(Arrays.copyOf(bad,25)),"truncated payload rejected");
         byte[] nan=encoded();ByteBuffer.wrap(nan).order(ByteOrder.LITTLE_ENDIAN).putFloat(20+"牛乳 200".getBytes(StandardCharsets.UTF_8).length,Float.NaN);rejects(()->OcrDocument.decode(nan),"nonfinite coordinates rejected");

@@ -104,10 +104,10 @@ public final class ReceiptParser {
     private static Kind fuzzyKind(String s){
         String t=label(s).replace("言十","計").replace("言ト","計");
         if(t.length()<2||t.length()>6)return Kind.OTHER;
-        if(t.equals("少計")||t.startsWith("小")&&oneEdit(t,"小計")||t.startsWith("商")&&oneEdit(t,"商品計"))return Kind.SUBTOTAL;
-        if(t.equals("台計")||t.equals("含計")||(t.startsWith("合")||t.startsWith("総"))&&(oneEdit(t,"合計")||oneEdit(t,"総計")||oneEdit(t,"総額")))return Kind.TOTAL;
-        for(String a:new String[]{"消費税","税額","内税","外税","税込","税抜"})if(oneEdit(t,a))return Kind.TAX;
-        for(String a:new String[]{"点数","支払金額","現金","お釣り"})if(oneEdit(t,a))return Kind.PAYMENT;
+        if(t.matches("[小少][計訐討汁什十]")||t.startsWith("商")&&oneEdit(t,"商品計"))return Kind.SUBTOTAL;
+        if(t.matches("[合台含総總][計訐討汁什十]")||t.matches("[総總][額頭顔]"))return Kind.TOTAL;
+        for(String a:new String[]{"消費税","税額","内税","外税","税込","税抜"})if((t.length()>=3||t.contains("税")||t.contains("稅"))&&oneEdit(t,a))return Kind.TAX;
+        for(String a:new String[]{"点数","支払金額","現金","お釣り"})if(t.length()>=3&&oneEdit(t,a))return Kind.PAYMENT;
         return Kind.OTHER;
     }
     private static Kind exactKind(String s){
