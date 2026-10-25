@@ -27,15 +27,18 @@ jobs:
         run: |
           sh tests/test-price-math.sh
           sh tests/test-parser.sh
+          sh tests/test-ocr-image.sh
           sh tests/privacy-sanity.sh
       - name: Embed offline Japanese and English OCR models
         run: sh scripts/fetch-ocr-models.sh
       - name: Assemble debug APK
-        run: gradle :app:assembleDebug --no-daemon
+        run: gradle :app:assembleDebug :app:lintDebug --no-daemon
+      - name: Verify debug APK privacy and integrity
+        run: python3 scripts/verify-debug-apk.py
       - name: Upload test APK
         uses: actions/upload-artifact@v4
         with:
-          name: kosso-pricebook-debug-v0.3
+          name: kosso-pricebook-debug-v0.4
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
