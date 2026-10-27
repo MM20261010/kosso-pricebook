@@ -143,6 +143,49 @@
       "ambiguous_suffix_items": [
         1
       ]
+    },
+    {
+      "id": "v07-unit-layout",
+      "image": "v07-unit-layout.png",
+      "items": [
+        "架空もやし 200g",
+        "架空パン 6枚入",
+        "架空コーヒー 500g",
+        "架空豆腐 300g",
+        "架空洗剤 CV-20",
+        "架空ビタミンC"
+      ],
+      "line_amounts": [
+        6,
+        158,
+        1460,
+        490,
+        399,
+        359
+      ],
+      "quantities": [
+        1,
+        2,
+        1,
+        2,
+        1,
+        1
+      ],
+      "units": [
+        6,
+        79,
+        1460,
+        245,
+        399,
+        359
+      ],
+      "date": "2026-10-27",
+      "basis": "EXCLUSIVE",
+      "subtotal": 2872,
+      "tax": 268,
+      "total": 3140,
+      "sha256": "b20ce566c69c3e160d276483e6c85a14159dd7491548c544f710f167055f8a8c",
+      "font_sha256": "b76b0433203017ca80401b2ee0dd69350349871c4b19d504c34dbdd80541690a"
     }
   ]
 }

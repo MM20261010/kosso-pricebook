@@ -53,11 +53,12 @@ public final class MainActivity extends Activity {
     private File cameraFile;
     private String reviewText="";
     private OcrDocument paddleDocument,reviewDocument;
+    private ReceiptReview reviewModel; private String reviewedText="";
     private volatile boolean ocrRunning;
     private static final AtomicBoolean OCR_BUSY=new AtomicBoolean();
     private volatile boolean closing;
     private Bitmap comparisonImage;
-    private String selectedOcr="Tesseract",tesseractOriginal="",paddleOriginal="",tesseractStats="",paddleStats="";
+    private String selectedOcr="PaddleOCR v5 / ncnn",tesseractOriginal="",paddleOriginal="",tesseractStats="",paddleStats="";
 
 
     @Override public void onCreate(Bundle savedInstanceState) {
@@ -70,6 +71,8 @@ public final class MainActivity extends Activity {
             }
             reviewText=savedInstanceState.getString("review_text","");
         }
+        if(getLastNonConfigurationInstance() instanceof ReceiptReview){reviewModel=(ReceiptReview)getLastNonConfigurationInstance();reviewedText=reviewText;}
+        if(savedInstanceState!=null)tab=savedInstanceState.getInt("tab",0);
         frame=new LinearLayout(this);frame.setOrientation(LinearLayout.VERTICAL);frame.setBackgroundColor(BG);
         frame.setPadding(dp(14),dp(10),dp(14),0);
         if(Build.VERSION.SDK_INT>=30){frame.setOnApplyWindowInsetsListener((v,insets)->{
@@ -125,7 +128,7 @@ public final class MainActivity extends Activity {
             List<PriceDb.Purchase> latest=db.latestForProduct(memo.key);
             if(latest.isEmpty()){card.addView(text("購入履歴なし。買った後で価格を登録してね。",13,false,MUTED));}
             else {for(PriceDb.Purchase p:latest){
-                String label=p.store+"  ¥"+priceFormat.format(p.gross)+" /個"+"  "+p.date+(p.sale?"  [特売]":"");
+                String label=p.store+"  税込 ¥"+priceFormat.format(p.gross)+" /個"+"  "+p.date+(p.sale?"  [特売]":"");
                 TextView line=text(label+"  ▸履歴",13,false,p.sale?MUTED:GREEN);line.setPadding(dp(6),dp(7),0,dp(7));
                 line.setOnClickListener(v->showPriceHistory(memo.key,p.store));card.addView(line);
             }}box(card);
@@ -138,32 +141,33 @@ public final class MainActivity extends Activity {
         LinearLayout capture=row();Button shot=button("📷 撮影",this::startCamera);
         capture.addView(shot,new LinearLayout.LayoutParams(0,dp(54),1));
         Button pick=button("🖼 写真を選ぶ",this::startImagePick);capture.addView(pick,new LinearLayout.LayoutParams(0,dp(54),1));content.addView(capture);
-        if(BuildConfig.DEBUG)showComparison();
+        if(BuildConfig.DEBUG){LinearLayout parent=content;content=disclosure("端末内OCR比較（詳細）",parent);showComparison();content=parent;}
         if(!reviewText.isEmpty())showOcrReview();
-        section("手入力で1商品登録");hint("レシートを読めない場合、または価格を追加入力する場合に使います。");
+        LinearLayout recordParent=content;content=disclosure("手入力で1商品登録",recordParent);hint("レシートを読めない場合、または価格を追加入力する場合に使います。");
         EditText store=edit("店名（例：スーパーA）",lastStore,InputType.TYPE_CLASS_TEXT);content.addView(store);
         EditText date=edit("購入日 YYYY-MM-DD",lastDate,InputType.TYPE_CLASS_DATETIME);content.addView(date);
         EditText name=edit("商品名（買い物メモと同じ表記で）","",InputType.TYPE_CLASS_TEXT);content.addView(name);
         EditText amount=edit("税込単価（円、1個分）","",InputType.TYPE_CLASS_NUMBER);content.addView(amount);
-        LinearLayout options=row();EditText tax=edit("税率%","8",InputType.TYPE_CLASS_NUMBER|InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        LinearLayout options=row();EditText tax=edit("税率%（不明は空欄）","",InputType.TYPE_CLASS_NUMBER|InputType.TYPE_NUMBER_FLAG_DECIMAL);
         options.addView(tax,new LinearLayout.LayoutParams(0,-2,1));
         EditText quantity=edit("個数","1",InputType.TYPE_CLASS_NUMBER);options.addView(quantity,new LinearLayout.LayoutParams(0,-2,1));content.addView(options);
         CheckBox sale=new CheckBox(this);sale.setText("特売・値引きの価格");content.addView(sale);
         Button save=button("この商品を記録",()->{
             try{
                 PriceDb.Purchase p=new PriceDb.Purchase();p.store=store.getText().toString().trim();p.name=name.getText().toString().trim();p.key=PriceMath.key(p.name);
-                p.date=date.getText().toString().trim();p.gross=Long.parseLong(amount.getText().toString().trim());p.tax=Double.parseDouble(tax.getText().toString().trim());
+                p.date=date.getText().toString().trim();p.gross=Long.parseLong(amount.getText().toString().trim());p.taxKnown=!tax.getText().toString().trim().isEmpty();p.tax=p.taxKnown?Double.parseDouble(tax.getText().toString().trim()):0;
                 p.quantity=Integer.parseInt(quantity.getText().toString().trim());p.sale=sale.isChecked();p.size=0;p.unit="";
                 if(p.store.isEmpty()||p.store.length()>120||p.name.isEmpty()||p.name.length()>120||!p.date.matches("20\\d{2}-\\d{2}-\\d{2}")||p.gross<0||p.gross>10_000_000||p.quantity<1||p.quantity>999||p.tax<0||p.tax>100||!Double.isFinite(p.tax))throw new IllegalArgumentException();
                 LocalDate.parse(p.date);db.addPurchase(p);lastStore=p.store;lastDate=p.date;toast("端末内へ記録しました");render();
             }catch(Exception ex){toast("店名・商品名・日付・税込単価・税率・個数を確認してください");}
-        });content.addView(save);
+        });content.addView(save);content=recordParent;
         section("最近の購入履歴");
         List<PriceDb.Purchase> purchases=db.recentPurchases(20);
         if(purchases.isEmpty())hint("まだ価格の記録はありません。");
         for(PriceDb.Purchase p:purchases){
             LinearLayout card=col();card.addView(text(p.name+"  ¥"+p.gross+(p.sale?"  [特売]":""),15,true,INK));
-            card.addView(text(p.store+" / "+p.date+" / 税率"+p.tax+"%",12,false,MUTED));
+            card.addView(text(p.store+" / "+p.date+" / "+(p.taxKnown?"税率"+p.tax+"%":"税率未確定"),12,false,MUTED));
+            if(p.receiptId!=null)card.addView(button("原票の集計を確認",()->new AlertDialog.Builder(this).setTitle("レシート集計").setMessage(db.receiptSummary(p.receiptId)).setPositiveButton("閉じる",null).show()));
             Button del=button("この明細を削除",()->new AlertDialog.Builder(this).setMessage(p.name+"の購入履歴を削除しますか？").setNegativeButton("キャンセル",null).setPositiveButton("削除",(d,w)->{db.deletePurchase(p.id);render();}).show());
             del.setTextSize(12);card.addView(del);box(card);
         }
@@ -173,10 +177,10 @@ public final class MainActivity extends Activity {
         StringBuilder result=new StringBuilder("過去の購入実績です。店頭の最新価格ではありません。\n\n");
         PriceDb.Purchase newestNormal=null,previousNormal=null;
         for(PriceDb.Purchase p:history){
-            result.append(p.date).append("   ").append(p.gross).append("円").append(p.sale?" [特売]":"").append(" 税率").append(p.tax).append("%\n");
+            result.append(p.date).append("   ").append(p.gross).append("円").append(p.sale?" [特売]":"").append(p.taxKnown?" 税率"+p.tax+"%":" 税率未確定").append("\n");
             if(!p.sale){ if(newestNormal==null)newestNormal=p;else if(previousNormal==null)previousNormal=p; }
         }
-        if(newestNormal!=null&&previousNormal!=null&&previousNormal.gross>0){
+        if(newestNormal!=null&&previousNormal!=null&&previousNormal.gross>0&&newestNormal.taxKnown&&previousNormal.taxKnown){
             double now=PriceMath.excludingTax(newestNormal.gross,newestNormal.tax);
             double old=PriceMath.excludingTax(previousNormal.gross,previousNormal.tax);
             result.insert(0,"直近の通常価格の税抜換算前回比: "+String.format(Locale.JAPAN,"%+.1f%%",PriceMath.percentChange(old,now))+"\n（規格・数量が同じ場合のみ比較可）\n\n");
@@ -205,7 +209,7 @@ public final class MainActivity extends Activity {
         if(comparisonImage!=null){comparisonImage.recycle();comparisonImage=null;}
     }
     private void showComparison(){
-        section("v0.6 端末内OCR比較");
+        section("v0.7 端末内OCR比較");
         hint("同じ展開画像を両方式で読み直せます。比較結果は購入履歴に自動保存しません。元テキストはこの画面内だけで確認できます。画面回転・終了で比較画像は破棄します。");
         RadioGroup engines=new RadioGroup(this);engines.setOrientation(RadioGroup.VERTICAL);
         for(String label:new String[]{"Tesseract","PaddleOCR v5 / ncnn"}){
@@ -217,7 +221,7 @@ public final class MainActivity extends Activity {
             Button reread=button("同じ画像を選択中の方式で読む",()->processReceipt(null,false));reread.setEnabled(!ocrRunning);content.addView(reread);
             Button discard=button("比較画像と両結果を破棄",()->{
                 if(ocrRunning){toast("読み取り完了までお待ちください");return;}
-                releaseComparisonImage();tesseractOriginal="";paddleOriginal="";tesseractStats="";paddleStats="";reviewText="";paddleDocument=null;reviewDocument=null;render();
+                releaseComparisonImage();tesseractOriginal="";paddleOriginal="";tesseractStats="";paddleStats="";reviewText="";paddleDocument=null;reviewDocument=null;reviewModel=null;render();
             });content.addView(discard);
         }
         if(ocrRunning)hint("端末内で読み取り中です。画像は送信していません。");
@@ -233,7 +237,7 @@ public final class MainActivity extends Activity {
             for(ReceiptParser.Candidate c:parsed.items)candidates.append(c.name).append(" / 行金額 ").append(c.price).append("円（").append(ReceiptParser.basisLabel(c.amountBasis)).append("） / 数量 ").append(c.quantity==null?"未確定":c.quantity).append('\n');
             card.addView(text(candidates.toString(),14,false,INK));
             TextView raw=text("元の認識テキスト：\n"+original,13,false,MUTED);raw.setTextIsSelectable(true);card.addView(raw);
-            Button show=button("この結果で確認・修正画面を開く",()->{if(ocrRunning){toast("読み取り中です");return;}selectedOcr=engine;reviewText=original;reviewDocument=document;render();});card.addView(show);box(card);
+            Button show=button("この結果で確認・修正画面を開く",()->{if(ocrRunning){toast("読み取り中です");return;}selectedOcr=engine;reviewText=original;reviewDocument=document;reviewModel=null;render();});card.addView(show);box(card);
         }
         hint("時間はモデル検証・初期化とOCRを含み、画像展開は含みません。メモリは200ms間隔で採ったプロセスPSSの最大標本です。正確なネイティブピークやエンジン単独の使用量ではありません。");
     }
@@ -270,103 +274,143 @@ public final class MainActivity extends Activity {
                 if(fail!=null){render();new AlertDialog.Builder(this).setTitle("OCRを実行できませんでした").setMessage(fail+"\n画像・認識内容は送信していません。手入力も使えます。").setPositiveButton("閉じる",null).show();return;}
                 selectedOcr=engine;
                 if(engine.equals("Tesseract")){tesseractOriginal=output;tesseractStats=stats;}else{paddleOriginal=output;paddleStats=stats;paddleDocument=recognizedDocument;}
-                reviewText=output;reviewDocument=recognizedDocument;if(output.isEmpty())toast("文字が見つかりませんでした。明るい場所で撮影し直してください");render();
+                reviewText=output;reviewDocument=recognizedDocument;reviewModel=null;if(output.isEmpty())toast("文字が見つかりませんでした。明るい場所で撮影し直してください");render();
             });
         },"local-receipt-ocr").start();
     }
+    private LinearLayout disclosure(String title,LinearLayout parent){
+        LinearLayout body=col();body.setVisibility(View.GONE);
+        Button toggle=button("▸ "+title,()->{});
+        toggle.setOnClickListener(v->{boolean open=body.getVisibility()!=View.VISIBLE;body.setVisibility(open?View.VISIBLE:View.GONE);toggle.setText((open?"▾ ":"▸ ")+title);});
+        parent.addView(toggle);parent.addView(body);return body;
+    }
     private void showOcrReview(){
-        section("OCR候補を1件ずつ確認");
-        hint("全候補は未選択です。行金額は単価とは限りません。商品名・数量・税込単価・税率を確認した商品だけチェックしてください。C/V・※や軽の印だけでは税率を確定しません。");
-        ReceiptParser.Receipt receipt=reviewDocument==null?ReceiptParser.parseReceipt(reviewText):ReceiptParser.parseDocument(reviewDocument);
-        hint(reviewDocument==null?"テキストから解析中。編集・画面再生成後は座標を使いません。画像を選び直すと位置付きで再認識できます。":"検出位置を使って商品名・金額・隣接する数量行を組み立てています。");
-        content.addView(text("店名（未認識なら入力）",13,true,INK));
-        EditText store=edit("店名（必須）",receipt.store,InputType.TYPE_CLASS_TEXT);content.addView(store);
-        content.addView(text("購入日（未認識なら入力）",13,true,INK));
-        EditText date=edit("YYYY-MM-DD",receipt.date,InputType.TYPE_CLASS_DATETIME);content.addView(date);
-        hint(receipt.reconciliation());
-        for(String warning:receipt.warnings)hint("要確認："+warning);
-        if(receipt.taxAmount!=null)hint((receipt.taxAmountFromBreakdown?"印字税額内訳の合算：":"印字された税額合計：")+receipt.taxAmount+"円（各商品の税率・税込単価とは別です）");
-        for(ReceiptParser.TaxBreakdown b:receipt.taxBreakdowns)hint("印字税区分 "+b.rate+"%：対象額 "+(b.base==null||b.uncertain?"未確定":b.base+"円")+" / 税額 "+(b.tax==null||b.uncertain?"未確定":b.tax+"円")+"。各商品への割当・端数処理は推測しません。");
-        List<ReceiptParser.Candidate> parsed=receipt.items;
-        List<EditText> names=new ArrayList<>(),prices=new ArrayList<>(),quantities=new ArrayList<>(),taxes=new ArrayList<>();
-        List<CheckBox> include=new ArrayList<>(),sale=new ArrayList<>();
-        if(parsed.isEmpty())hint("確かな商品候補がありません。下の原文を修正・再解析するか手入力してください。");
-        for(ReceiptParser.Candidate candidate:parsed){
-            LinearLayout card=col();
-            TextView raw=text("原文："+candidate.raw,14,false,MUTED);card.addView(raw);
-            card.addView(text("行金額："+candidate.price+"円 / 印字単価："+(candidate.unitPrice==null?"未確定":candidate.unitPrice+"円（"+ReceiptParser.basisLabel(candidate.amountBasis)+"）"),14,true,INK));
-            card.addView(text("行金額の区分："+ReceiptParser.basisLabel(candidate.amountBasis)+(candidate.markers.isEmpty()?"":" / 印："+candidate.markers+"（意味未確認）"),13,false,MUTED));
-            if(candidate.nameSuffixUncertain)card.addView(text("末尾C/Vは印か商品名の一部か未確定です。原文を確認して修正してください。",13,false,MUTED));
-            card.addView(text("商品名",13,false,MUTED));
-            EditText name=edit("商品名",candidate.name,InputType.TYPE_CLASS_TEXT);card.addView(name);
-            card.addView(text("購入数量（規格・内容量とは別）",13,false,MUTED));
-            EditText quantity=edit("未確定",candidate.quantity==null?"":candidate.quantity.toString(),InputType.TYPE_CLASS_NUMBER);card.addView(quantity);
-            card.addView(text("税込単価（1個分・値引後）",13,false,MUTED));
-            EditText price=edit("行金額から自動確定しません","",InputType.TYPE_CLASS_NUMBER);card.addView(price);
-            if(candidate.amountBasis==ReceiptParser.AmountBasis.EXCLUSIVE)card.addView(text("税抜の行金額は税込単価へ自動換算しません。税率・端数・割引の扱いを確認して手入力してください。",13,false,MUTED));
-            else card.addView(button("行金額を税込合計と確認して単価計算",()->{
-                try{
-                    int q=Integer.parseInt(quantity.getText().toString().trim());
-                    if(q<1||q>999)throw new IllegalArgumentException();
-                    if(candidate.price%q!=0){toast("割り切れない単価は自動入力できません。1円未満の単価は現在の履歴では正確に保存できません。");return;}
-                    new AlertDialog.Builder(this).setTitle("金額の意味を確認")
-                        .setMessage("この行の "+candidate.price+"円は、購入数量 "+q+" 個分の値引後・税込合計ですか？税抜や値引前の場合は戻って修正してください。")
-                        .setNegativeButton("戻る",null).setPositiveButton("税込合計と確認",(d,w)->price.setText(String.valueOf(candidate.price/q))).show();
-                }catch(Exception e){toast("先に、確認した購入数量を入力してください");}
-            }));
-            card.addView(text("購入時の税率（%）",13,false,MUTED));
-            EditText tax=edit("未確定",candidate.taxRate==null?"":candidate.taxRate.toString(),InputType.TYPE_CLASS_NUMBER|InputType.TYPE_NUMBER_FLAG_DECIMAL);card.addView(tax);
-            CheckBox discount=new CheckBox(this);discount.setText("特売・値引きあり（配分を確認）");card.addView(discount);
-            CheckBox use=new CheckBox(this);use.setChecked(false);use.setText("商品・数量・税込単価・税率を確認したので登録する");card.addView(use);box(card);
-            names.add(name);prices.add(price);quantities.add(quantity);taxes.add(tax);include.add(use);sale.add(discount);
+        if(reviewModel==null||!reviewedText.equals(reviewText)){
+            reviewModel=new ReceiptReview(reviewDocument==null?ReceiptParser.parseReceipt(reviewText):ReceiptParser.parseDocument(reviewDocument));reviewedText=reviewText;
         }
-        if(!parsed.isEmpty()){
-            content.addView(button("確認済みの商品だけ保存",()->{
-                try{
-                    String shop=store.getText().toString().trim(),purchaseDate=date.getText().toString().trim();
-                    LocalDate.parse(purchaseDate);
-                    if(shop.isEmpty()||shop.length()>120||!purchaseDate.matches("20\\d{2}-\\d{2}-\\d{2}"))throw new IllegalArgumentException();
-                    List<PriceDb.Purchase> list=new ArrayList<>();long selectedSum=0;boolean changedLineAmount=false;
-                    for(int n=0;n<parsed.size();n++){
-                        if(!include.get(n).isChecked())continue;
-                        PriceDb.Purchase p=new PriceDb.Purchase();p.store=shop;p.date=purchaseDate;
-                        p.name=names.get(n).getText().toString().trim();p.key=PriceMath.key(p.name);
-                        p.gross=Long.parseLong(prices.get(n).getText().toString().trim());p.quantity=Integer.parseInt(quantities.get(n).getText().toString().trim());
-                        p.tax=Double.parseDouble(taxes.get(n).getText().toString().trim());p.sale=sale.get(n).isChecked();p.size=0;p.unit="";
-                        if(p.name.isEmpty()||p.name.length()>120||p.gross<1||p.gross>1_000_000||p.quantity<1||p.quantity>999||!Double.isFinite(p.tax)||p.tax<0||p.tax>100)throw new IllegalArgumentException();
-                        selectedSum+=p.gross*p.quantity;if(parsed.get(n).amountBasis!=ReceiptParser.AmountBasis.EXCLUSIVE&&p.gross*p.quantity!=parsed.get(n).price)changedLineAmount=true;list.add(p);
-                    }
-                    if(list.isEmpty()){toast("確認した商品にチェックを入れてください");return;}
-                    String comparison=receipt.total==null?"レシート総額は未確定です。":
-                        "選択商品の税込合計 "+selectedSum+"円 / レシート総額 "+receipt.total+"円"+
-                        (selectedSum!=receipt.total?"\n警告：総額が一致しません。部分登録・認識漏れ・値引きを確認してください。":"\n総額は一致しています。");
-                    if(changedLineAmount)comparison+="\n警告：入力した単価×数量とOCRの行金額が異なる商品があります。訂正・割引配分が正しいか確認してください。";
-                    new AlertDialog.Builder(this).setTitle(list.size()+"件の確認済み商品を保存しますか？")
-                        .setMessage(comparison+"\n"+receipt.reconciliation()+"\n同じレシートの二重登録に注意してください。")
-                        .setNegativeButton("戻って修正",null).setPositiveButton("確認して保存",(d,w)->{
-                            try{db.addPurchases(list);lastStore=shop;lastDate=purchaseDate;reviewText="";reviewDocument=null;
-                                toast(list.size()+"件を端末内に保存しました");render();}
-                            catch(Exception e){toast("保存できませんでした。入力を確認してください。");}
-                        }).show();
-                }catch(Exception ex){toast("選択した商品の数量・税込単価・税率、店名・実在する購入日を入力してください");}
-            }));
+        ReceiptReview model=reviewModel;ReceiptParser.Receipt receipt=model.receipt;
+        section("購入商品の確認");
+        hint("商品を選び、単価を確認してまとめて保存。選択だけでは保存されません。");
+        EditText store=edit("企業名・店舗名（必須）",model.store,InputType.TYPE_CLASS_TEXT);content.addView(store);
+        watch(store,()->model.store=store.getText().toString().trim());
+        EditText date=edit("購入日 YYYY-MM-DD",model.date,InputType.TYPE_CLASS_DATETIME);content.addView(date);
+        watch(date,()->model.date=date.getText().toString().trim());
+        LinearLayout actions=row();
+        actions.addView(button("全商品を選択",()->{for(ReceiptReview.Item i:model.items)i.selected=true;render();}),new LinearLayout.LayoutParams(0,-2,1));
+        actions.addView(button("選択を解除",()->{for(ReceiptReview.Item i:model.items)i.selected=false;render();}),new LinearLayout.LayoutParams(0,-2,1));content.addView(actions);
+        content.addView(button("選択商品の単価をまとめて確認",()->confirmUnits(model)));
+        if(model.items.isEmpty())hint("商品候補がありません。詳細の原文を見直すか、手入力してください。");
+        for(ReceiptReview.Item item:model.items){
+            LinearLayout card=col(),top=row();CheckBox selected=new CheckBox(this);selected.setChecked(item.selected);selected.setContentDescription(item.name+"を保存対象に選択");selected.setOnCheckedChangeListener((b,ok)->item.selected=ok);top.addView(selected);
+            TextView name=text(item.name,19,true,INK);name.setPadding(dp(6),dp(8),0,dp(8));name.setOnClickListener(v->editReviewItem(item));top.addView(name,new LinearLayout.LayoutParams(0,-2,1));card.addView(top);
+            card.addView(text(item.equation(),16,true,INK));
+            if(item.grossUnit!=null)card.addView(text("確認済み税込単価 "+item.grossUnit+"円 / 点",16,true,GREEN));
+            String issue=item.issue();Button detail=button(issue.isEmpty()?"詳細・修正":"要確認："+issue+"  ›",()->editReviewItem(item));card.addView(detail);box(card);
         }
-        section("集計・税・支払などの除外行");
-        StringBuilder excluded=new StringBuilder();
-        for(ReceiptParser.Line line:receipt.lines)if(line.kind!=ReceiptParser.Kind.ITEM&&line.kind!=ReceiptParser.Kind.ITEM_DETAIL&&line.kind!=ReceiptParser.Kind.OTHER)
-            excluded.append(line.kind).append("：").append(line.raw).append('\n');
-        hint(excluded.length()==0?"分類できない行もあります。原文と候補を照合してください。":excluded.toString());
-        section("認識テキストの修正・再解析");
-        hint("再解析や画面切替では、この画面で編集した明細は引き継がれません。保存前に確認してください。");
-        EditText raw=new EditText(this);raw.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(32000)});raw.setText(reviewText);raw.setSingleLine(false);raw.setMinLines(4);raw.setMaxLines(8);raw.setTextSize(13);content.addView(raw);
-        content.addView(button("このテキストで再解析",()->{reviewText=raw.getText().toString();reviewDocument=null;render();}));
-        content.addView(button("このOCR結果を破棄",()->{reviewText="";reviewDocument=null;render();}));
+        if(!model.items.isEmpty())content.addView(button("選択した確認済み商品を一括保存",()->saveReviewed(model)));
+        LinearLayout details=disclosure("レシート詳細・集計・認識テキスト",content);
+        details.addView(text(receipt.reconciliation(),13,false,MUTED));
+        for(String warning:receipt.warnings)details.addView(text("・"+warning,13,false,MUTED));
+        for(ReceiptParser.TaxBreakdown b:receipt.taxBreakdowns)details.addView(text(b.rate+"% 対象額 "+b.base+"円 / 税額 "+b.tax+"円"+(b.uncertain?"（競合）":""),13,false,MUTED));
+        StringBuilder classified=new StringBuilder();
+        for(ReceiptParser.Line line:receipt.lines)if(line.kind!=ReceiptParser.Kind.ITEM&&line.kind!=ReceiptParser.Kind.ITEM_DETAIL)classified.append(line.kind).append("：").append(line.raw).append('\n');
+        TextView lines=text(classified.toString(),12,false,MUTED);lines.setTextIsSelectable(true);details.addView(lines);
+        if(reviewDocument!=null){
+            StringBuilder positions=new StringBuilder("検出座標（端末内・未保存）\n");
+            for(OcrDocument.Region region:reviewDocument.regions){positions.append(region.text).append("：");for(int n=0;n<4;n++)positions.append('(').append(Math.round(region.x(n))).append(',').append(Math.round(region.y(n))).append(") ");positions.append('\n');}
+            LinearLayout geometry=disclosure("検出領域",details);geometry.addView(text(positions.toString(),12,false,MUTED));
+        }
+        details.addView(text("再解析では未保存の修正を破棄します。画面回転時は確認中の明細をメモリ内に保持します。アプリ終了後は画像を選び直してください。",13,false,MUTED));
+        EditText raw=new EditText(this);raw.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(32000)});raw.setText(reviewText);raw.setMinLines(4);raw.setMaxLines(8);details.addView(raw);
+        details.addView(button("原文を修正して再解析",()->new AlertDialog.Builder(this).setMessage("未保存の明細修正を破棄して再解析しますか？").setNegativeButton("戻る",null).setPositiveButton("再解析",(d,w)->{reviewText=raw.getText().toString();reviewDocument=null;reviewModel=null;render();}).show()));
+        details.addView(button("OCR結果を破棄",()->new AlertDialog.Builder(this).setMessage("確認中の明細を破棄しますか？").setNegativeButton("戻る",null).setPositiveButton("破棄",(d,w)->{reviewText="";reviewDocument=null;reviewModel=null;render();}).show()));
+    }
+    private void watch(EditText edit,Runnable change){
+        edit.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence s,int start,int count,int after){}public void onTextChanged(CharSequence s,int start,int before,int count){change.run();}public void afterTextChanged(android.text.Editable s){}});
+    }
+    private EditText labeled(LinearLayout parent,String title,String initial,int input){parent.addView(text(title,13,false,MUTED));EditText e=edit("未確定",initial,input);parent.addView(e);return e;}
+    private void editReviewItem(ReceiptReview.Item item){
+        LinearLayout form=col();form.setPadding(dp(16),dp(4),dp(16),dp(20));ScrollView scroll=new ScrollView(this);scroll.addView(form);
+        EditText name=labeled(form,"商品名",item.name,InputType.TYPE_CLASS_TEXT);
+        EditText spec=labeled(form,"容量・規格（名称にも残して別規格と区別）",item.specification,InputType.TYPE_CLASS_TEXT);
+        EditText qty=labeled(form,"購入数量（容量・規格とは別）",item.quantity==null?"":item.quantity.toString(),InputType.TYPE_CLASS_NUMBER);
+        EditText printed=labeled(form,"印字単価（1点分）",item.printedUnit==null?"":item.printedUnit.toString(),InputType.TYPE_CLASS_NUMBER);
+        EditText line=labeled(form,"行金額（複数購入の合計）",String.valueOf(item.lineAmount),InputType.TYPE_CLASS_NUMBER);
+        RadioGroup basis=new RadioGroup(this);String[] labels={"区分未確定","税抜の印字金額","税込の印字金額"};int[] ids=new int[3];
+        for(int n=0;n<3;n++){RadioButton r=new RadioButton(this);ids[n]=View.generateViewId();r.setId(ids[n]);r.setText(labels[n]);basis.addView(r);if(item.basis.ordinal()==n)basis.check(ids[n]);}form.addView(basis);
+        EditText gross=labeled(form,"確認した税込単価（1点分・値引後）",item.grossUnit==null?"":item.grossUnit.toString(),InputType.TYPE_CLASS_NUMBER);
+        EditText tax=labeled(form,"確認した税率 %（不明なら空欄）",item.taxRate==null?"":priceFormat.format(item.taxRate),InputType.TYPE_CLASS_NUMBER|InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        CheckBox sale=new CheckBox(this);sale.setText("特売・値引きあり");sale.setChecked(item.sale);form.addView(sale);
+        LinearLayout original=disclosure("原文・記号を照合",form);original.addView(text(item.source.raw+"\n管理記号："+item.source.markers+"（税率は推測しません）",13,false,MUTED));
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("商品を確認・修正").setView(scroll).setNegativeButton("戻る",null).setPositiveButton("修正を反映",null).create();
+        dialog.setOnShowListener(v->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(btn->{
+            try{
+                String nm=name.getText().toString().trim(),sp=spec.getText().toString().trim();if(nm.isEmpty()||nm.length()>120||sp.length()>120)throw new IllegalArgumentException();
+                Integer q=qty.getText().toString().trim().isEmpty()?null:Integer.valueOf(qty.getText().toString().trim());
+                Long pu=optionalAmount(printed),gu=optionalAmount(gross),la=optionalAmount(line);if(la==null||la<1||q!=null&&(q<1||q>999))throw new IllegalArgumentException();
+                Double rate=tax.getText().toString().trim().isEmpty()?null:Double.valueOf(tax.getText().toString().trim());if(rate!=null&&(!Double.isFinite(rate)||rate<0||rate>100))throw new IllegalArgumentException();
+                int selected=0;for(int n=0;n<3;n++)if(basis.getCheckedRadioButtonId()==ids[n])selected=n;
+                item.name=nm;item.specification=sp;item.quantity=q;item.printedUnit=pu;item.lineAmount=la;item.basis=ReceiptParser.AmountBasis.values()[selected];item.grossUnit=gu;item.taxRate=rate;item.sale=sale.isChecked();item.detailsConfirmed=true;
+                dialog.dismiss();render();
+            }catch(Exception e){toast("名前・金額・数量・税率の範囲を確認してください。未確定値は空欄にできます。");}
+        }));dialog.show();
+    }
+    private Long optionalAmount(EditText edit){String s=edit.getText().toString().trim();if(s.isEmpty())return null;long n=Long.parseLong(s);if(n<1||n>1_000_000)throw new IllegalArgumentException();return n;}
+    private void confirmUnits(ReceiptReview model){
+        List<ReceiptReview.Item> selected=new ArrayList<>();for(ReceiptReview.Item i:model.items)if(i.selected)selected.add(i);
+        if(selected.isEmpty()){toast("対象商品を選択してください");return;}
+        LinearLayout form=col();form.setPadding(dp(16),dp(4),dp(16),dp(12));ScrollView scroll=new ScrollView(this);scroll.addView(form);
+        StringBuilder names=new StringBuilder();for(ReceiptReview.Item i:selected)names.append(i.name).append("：").append(i.equation()).append('\n');form.addView(text(names.toString(),14,true,INK));
+        RadioGroup modes=new RadioGroup(this);RadioButton gross=new RadioButton(this),net=new RadioButton(this);gross.setId(View.generateViewId());net.setId(View.generateViewId());gross.setText("印字金額は値引後の税込と確認");net.setText("印字金額は税抜・単価ごとの換算と確認");modes.addView(gross);modes.addView(net);form.addView(modes);
+        EditText tax=labeled(form,"この選択商品の税率 %（税込なら不明のまま可）","",InputType.TYPE_CLASS_NUMBER|InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        RadioGroup rounding=new RadioGroup(this);int[] ids=new int[3];String[] roundLabels={"1点単価ごとに切り捨て","1点単価ごとに四捨五入","1点単価ごとに切り上げ"};
+        for(int n=0;n<3;n++){RadioButton b=new RadioButton(this);ids[n]=View.generateViewId();b.setId(ids[n]);b.setText(roundLabels[n]);rounding.addView(b);}form.addView(rounding);
+        CheckBox one=new CheckBox(this);one.setText("数量未確定の選択商品は、原票で1点と確認した");form.addView(one);
+        CheckBox checked=new CheckBox(this);checked.setText("選択商品の名称・数量・価格区分・値引を原票で確認した（混在税率は分けて選択）");form.addView(checked);
+        form.addView(text("税抜換算は、1点単位の端数処理を確認できる場合だけ使ってください。合計・税区分単位で処理される場合や割引は、商品詳細で税込単価を手入力してください。C/Vから税率は決めません。",13,false,MUTED));
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle(selected.size()+"商品の単価を確認").setView(scroll).setNegativeButton("戻る",null).setPositiveButton("確認値を反映（保存は別）",null).create();
+        dialog.setOnShowListener(v->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(btn->{
+            try{
+                if(!checked.isChecked()||modes.getCheckedRadioButtonId()==-1)throw new IllegalArgumentException("確認欄と価格区分を選んでください");
+                boolean isNet=modes.getCheckedRadioButtonId()==net.getId();Double rate=tax.getText().toString().trim().isEmpty()?null:Double.valueOf(tax.getText().toString().trim());
+                if(rate!=null&&(!Double.isFinite(rate)||rate<0||rate>100))throw new IllegalArgumentException("税率の範囲を確認してください");
+                ReceiptReview.Rounding method=null;for(int n=0;n<3;n++)if(rounding.getCheckedRadioButtonId()==ids[n])method=ReceiptReview.Rounding.values()[n];
+                List<Long> units=new ArrayList<>();
+                for(ReceiptReview.Item i:selected){
+                    ReceiptReview.Item copy=new ReceiptReview.Item(i.source);copy.quantity=i.quantity==null&&one.isChecked()?1:i.quantity;copy.printedUnit=i.printedUnit;copy.lineAmount=i.lineAmount;copy.basis=i.basis;
+                    if(i.source.taxRate!=null&&rate!=null&&i.source.taxRate.doubleValue()!=rate)throw new IllegalArgumentException("印字税率と異なります。商品詳細で個別に確認してください");
+                    units.add(ReceiptReview.confirmedUnit(copy,isNet,rate,method));
+                }
+                for(int n=0;n<selected.size();n++){ReceiptReview.Item i=selected.get(n);if(i.quantity==null&&one.isChecked())i.quantity=1;i.grossUnit=units.get(n);i.taxRate=rate;i.detailsConfirmed=true;}
+                dialog.dismiss();render();
+            }catch(Exception e){toast(e instanceof IllegalArgumentException&&e.getMessage()!=null?e.getMessage():"値を確認してください");}
+        }));dialog.show();
+    }
+    private void saveReviewed(ReceiptReview model){
+        try{
+            String shop=model.store.trim(),date=model.date.trim();LocalDate.parse(date);if(shop.isEmpty()||shop.length()>120||!date.matches("20\\d{2}-\\d{2}-\\d{2}"))throw new IllegalArgumentException();
+            List<PriceDb.Purchase> list=new ArrayList<>();long sum=0;boolean mismatch=false;
+            for(ReceiptReview.Item item:model.items){if(!item.selected)continue;if(!item.ready())throw new IllegalArgumentException();
+                PriceDb.Purchase p=new PriceDb.Purchase();p.name=item.name.trim();if(!item.specification.isEmpty()&&!PriceMath.key(p.name).contains(PriceMath.key(item.specification)))p.name+=" "+item.specification;if(p.name.length()>120)throw new IllegalArgumentException();p.key=PriceMath.key(p.name);p.store=shop;p.date=date;p.quantity=item.quantity;p.gross=item.grossUnit;p.taxKnown=item.taxRate!=null;p.tax=p.taxKnown?item.taxRate:0;p.sale=item.sale;p.unit="";p.specification=item.specification;p.printedUnit=item.printedUnit;p.lineAmount=item.lineAmount;p.basis=item.basis.name();
+                sum+=p.gross*p.quantity;mismatch|=item.basis!=ReceiptParser.AmountBasis.EXCLUSIVE&&p.gross*p.quantity!=item.lineAmount;list.add(p);
+            }
+            if(list.isEmpty()){toast("保存する商品を選択してください");return;}
+            String summary=list.size()+"商品 / 税込計 "+sum+"円";
+            if(model.receipt.total!=null)summary+="\n原票合計 "+model.receipt.total+"円"+(sum!=model.receipt.total?"（不一致：部分保存・端数・値引を確認）":"（一致）");
+            if(mismatch)summary+="\n入力単価×数量と印字行金額が異なる商品があります。";
+            summary+="\n原票集計はOCR候補として端末内に保存します。画像・原文・管理番号は保存しません。二重登録にも注意してください。";
+            new AlertDialog.Builder(this).setTitle("確認済み商品を保存しますか？").setMessage(summary).setNegativeButton("戻る",null).setPositiveButton("確認して保存",(d,w)->{
+                try{db.addReceiptPurchases(list,model.receipt,shop,date);lastStore=shop;lastDate=date;reviewText="";reviewDocument=null;reviewModel=null;toast(list.size()+"商品を保存しました");render();}catch(Exception e){toast("保存できませんでした。既存データは変更していません。");}
+            }).show();
+        }catch(Exception e){toast("選択商品の数量・確認済み税込単価、店舗名・購入日を確認してください。税率不明は空欄で保存できます。");}
     }
     private void showAdmin(){
         section("データは端末内だけ");
         hint("インターネット権限・位置情報権限・広告・解析ツールなし。買い物履歴はアプリ専用のSQLiteデータベースに保存します。");
+        section("画像の扱い");
+        hint("レシート画像は保存しません。比較中の画像はメモリ内だけに保持し、破棄・終了で消えます。任意の長期保管・閲覧機能は今回未実装です。JSONに画像・OCR原文・管理番号は含みません。外部カメラアプリが写真を保存する場合は、そのアプリ側で管理してください。");
         section("バックアップ / 復元");
-        hint("端末故障や機種変更に備え、JSONを定期的に保存してください。書き出し先は自分で選べます。クラウドを選ぶと、そのサービスにはファイルが渡ります。");
+        hint("v0.7は旧v1 JSONを復元できます。書き出すv2 JSONはv0.7以降専用です（税率未確定・集計・印字単価を保持）。旧版へ戻す前に旧版のJSONも保管してください。端末故障や機種変更に備え、JSONを定期的に保存してください。書き出し先は自分で選べます。クラウドを選ぶと、そのサービスにはファイルが渡ります。");
         content.addView(button("JSONバックアップを書き出す",()->{
             Intent intent=new Intent(Intent.ACTION_CREATE_DOCUMENT);intent.addCategory(Intent.CATEGORY_OPENABLE);intent.setType("application/json");
             intent.putExtra(Intent.EXTRA_TITLE,"kosso-pricebook-"+LocalDate.now()+".json");startActivityForResult(intent,CREATE_BACKUP);
@@ -374,7 +418,7 @@ public final class MainActivity extends Activity {
         content.addView(button("JSONを復元（現在の記録と置換）",()->{
             Intent intent=new Intent(Intent.ACTION_OPEN_DOCUMENT);intent.addCategory(Intent.CATEGORY_OPENABLE);intent.setType("application/json");startActivityForResult(intent,RESTORE_BACKUP);
         }));
-        section("試作版 v0.6 OCR比較 / 予定");
+        section("試作版 v0.7 品目単価の確認 / 予定");
         hint("✅ 買い物メモと店舗別の前回税込価格\n✅ レシート撮影・端末内OCR候補・まとめて保存の実装\n✅ 履歴と前回比、手入力・バックアップ\n✅ 自動バックアップなし・外部送信なし\n⌛ Android実機でのOCR精度・APK検証\n⌛ 同一商品の表記ゆれ学習\n⌛ 内容量・100g単価比較画面\n⌛ 減税制度確定後の税率更新");
         hint("F-Droid申請前の開発用ビルドです。公式掲載はまだ行っていません。");
     }
@@ -414,8 +458,9 @@ public final class MainActivity extends Activity {
     }
     @Override protected void onSaveInstanceState(Bundle state){
         state.putString("camera_path",cameraFile==null?"":cameraFile.getAbsolutePath());
-        state.putString("review_text",reviewText);
+        state.putString("review_text",reviewText);state.putInt("tab",tab);
         super.onSaveInstanceState(state);
     }
+    @Override public Object onRetainNonConfigurationInstance(){return reviewModel;}
     @Override protected void onDestroy(){closing=true;if(!ocrRunning)releaseComparisonImage();paddleDocument=null;reviewDocument=null;db.close();super.onDestroy();}
 }
