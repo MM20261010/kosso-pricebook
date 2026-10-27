@@ -19,7 +19,7 @@ final class ReceiptLayout {
         }
     }
     static final class Part {
-        String text;double left=Double.POSITIVE_INFINITY,right=Double.NEGATIVE_INFINITY,top=Double.POSITIVE_INFINITY,bottom=Double.NEGATIVE_INFINITY;
+        int sourceId;String text;double left=Double.POSITIVE_INFINITY,right=Double.NEGATIVE_INFINITY,top=Double.POSITIVE_INFINITY,bottom=Double.NEGATIVE_INFINITY;
         double height(){return bottom-top;}
         double center(){return (top+bottom)/2;}
     }
@@ -28,8 +28,8 @@ final class ReceiptLayout {
         for(OcrDocument.Region r:doc.regions){double a=Math.atan2(r.y(1)-r.y(0),r.x(1)-r.x(0));if(Math.abs(a)<Math.PI/4)angles.add(a);}
         angles.sort(Double::compare);double angle=angles.isEmpty()?0:angles.get(angles.size()/2),cos=Math.cos(angle),sin=Math.sin(angle);
         List<Part> parts=new ArrayList<>();
-        for(OcrDocument.Region region:doc.regions){
-            Part p=new Part();p.text=region.text;
+        int sourceId=0;for(OcrDocument.Region region:doc.regions){
+            Part p=new Part();p.sourceId=sourceId++;p.text=region.text;
             for(int i=0;i<4;i++){
                 double x=region.x(i)*cos+region.y(i)*sin,y=region.y(i)*cos-region.x(i)*sin;
                 p.left=Math.min(p.left,x);p.right=Math.max(p.right,x);p.top=Math.min(p.top,y);p.bottom=Math.max(p.bottom,y);

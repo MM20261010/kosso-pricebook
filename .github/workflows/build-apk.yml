@@ -1,8 +1,14 @@
 name: Test APK (manual run)
 on:
   workflow_dispatch:
+    inputs:
+      compare_v08_apk:
+        description: 'Compare the exact pinned v0.8 APK DEX against this APK (baseline artifact expires 2026-11-10)'
+        type: boolean
+        default: false
 permissions:
   contents: read
+  actions: read
 jobs:
   debug-apk:
     runs-on: ubuntu-latest
@@ -46,7 +52,7 @@ jobs:
       - name: Upload test APK
         uses: actions/upload-artifact@v4
         with:
-          name: kosso-pricebook-debug-v0.8
+          name: kosso-pricebook-debug-v0.8.1
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
@@ -54,7 +60,7 @@ jobs:
       - name: Upload synthetic instrumentation APK
         uses: actions/upload-artifact@v4
         with:
-          name: kosso-pricebook-v0.8-synthetic-tests
+          name: kosso-pricebook-v0.8.1-synthetic-tests
           path: app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
           if-no-files-found: error
           retention-days: 14
@@ -72,14 +78,24 @@ jobs:
         with:
           packages: 'platform-tools'
       - name: Install AOSP emulator
-        run: sdkmanager 'emulator' 'system-images;android-35;default;x86_64'
+        run: sdkmanager 'build-tools;35.0.0' 'emulator' 'system-images;android-35;default;x86_64'
       - uses: actions/download-artifact@v4
         with:
-          name: kosso-pricebook-debug-v0.8
+          name: kosso-pricebook-debug-v0.8.1
           path: apk
       - uses: actions/download-artifact@v4
         with:
-          name: kosso-pricebook-v0.8-synthetic-tests
+          name: kosso-pricebook-v0.8.1-synthetic-tests
           path: test-apk
+      - name: Download pinned v0.8 APK for DEX comparison
+        if: inputs.compare_v08_apk
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 40500712064
+          name: kosso-pricebook-debug-v0.8
+          path: baseline-v08
       - name: Test local OCRs and JSON compatibility with synthetic receipts
-        run: bash scripts/android-smoke.sh apk/app-debug.apk test-apk/app-debug-androidTest.apk
+        env:
+          REQUIRE_V08_BASELINE: ${{ inputs.compare_v08_apk }}
+        run: bash scripts/android-smoke.sh apk/app-debug.apk test-apk/app-debug-androidTest.apk baseline-v08/app-debug.apk
