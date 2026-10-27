@@ -122,7 +122,7 @@ public final class ReceiptParser {
         if(count==0)return t.matches("(?i)^(?:レジ|担当者?|責任者|取引|伝票|会員)(?:番号|N[o0][.]?)?$|^No[.:#][0-9,]+$");
         // Two number labels are administration even when a store heading precedes them.
         // A single label embedded in a product title is not enough.
-        return count>=2||first==0&&t.substring(lastEnd).matches("[0-9, .:#-]*")||t.substring(lastEnd).matches("[0-9, .:#-]*")&&t.substring(0,first).matches(".{0,100}(?:店|支店|店舗)");
+        return t.matches("(?i).*(?:取[引弓](?:番号|N[o0][.]?)|レ[ジシ](?:番号|N[o0][.]?)|担当者?(?:番号|N[o0][.]?))[:：#.-]?[0-9][0-9, .:#-]*$")||count>=2||first==0&&t.substring(lastEnd).matches("[0-9, .:#-]*")||t.substring(lastEnd).matches("[0-9, .:#-]*")&&t.substring(0,first).matches(".{0,100}(?:店|支店|店舗)");
     }
     private static boolean summaryEvidence(List<Input> input,int index,Receipt r,String s){
         if(compact(s).matches(".*[0-9]{1,3}(?:点|個).*"))return true;

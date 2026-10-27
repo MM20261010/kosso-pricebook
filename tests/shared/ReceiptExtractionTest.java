@@ -41,7 +41,7 @@ public final class ReceiptExtractionTest {
     }
     public static void main(String[] args){
         for(int variant=0;variant<4;variant++)core(parsed(variant));
-        for(String name:new String[]{"小計ノート","小計8点セット","商品計量スプーン","合計ノート","小汁うどん","小豆","小麦","内臓","総菜","16茶","21世紀ブレンド","3Mスポンジ","2in1洗剤","CV-20洗剤","No.1珈琲","レジ袋","取引ノート","担当者のおすすめ茶"}){
+        for(String name:new String[]{"小計ノート","小計8点セット","商品計量スプーン","合計ノート","小汁うどん","小豆","小麦","内臓","総菜","16茶","21世紀ブレンド","3Mスポンジ","2in1洗剤","CV-20洗剤","No.1珈琲","レジ袋","取引ノート","取引No.1ガイド","担当者のおすすめ茶"}){
             ReceiptParser.Receipt r=ReceiptParser.parseReceipt(name+" 399");
             check(r.items.size()==1&&r.items.get(0).name.equals(name),"inverse legitimate name: "+name);
         }
@@ -51,7 +51,7 @@ public final class ReceiptExtractionTest {
             check(r.items.get(0).quantity==2&&r.items.get(1).quantity==null,"mismatched follow-on quantity stays unknown");
         }
         check(ReceiptParser.parseReceipt("小汁200").items.size()==1,"bare soup name not a subtotal without context");
-        for(String row:new String[]{"架空店舗No00レジNo00取引No12,345","架空店レジ00取引No12345","担当者No00レジNo00取引No12345","取引No12345","レジNo00","No.12345","架空店レジN000取引N012345"})check(ReceiptParser.parseReceipt(row).items.isEmpty(),"concatenated labels never products");
+        for(String row:new String[]{"架空店舗No00レジNo00取引No12,345","架空店レジ00取引No12345","担当者No00レジNo00取引No12345","取引No12345","レジNo00","No.12345","架空店レジN000取引N012345","架空受付取引No12345","会計案内レジNo00"})check(ReceiptParser.parseReceipt(row).items.isEmpty(),"concatenated labels never products");
         ReceiptParser.Receipt r=parsed(0);ReceiptReview review=new ReceiptReview(r);
         check(review.items.stream().allMatch(i->!i.selected&&i.grossUnit==null),"all unselected / no gross assumption");
         check(review.items.stream().anyMatch(i->!i.codeConfirmed),"unlabelled code columns need confirmation");
