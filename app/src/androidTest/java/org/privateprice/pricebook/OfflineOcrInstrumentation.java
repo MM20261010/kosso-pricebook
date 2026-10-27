@@ -64,6 +64,12 @@ public final class OfflineOcrInstrumentation extends Instrumentation {
         Bundle result=new Bundle();
         try{
             check(BuildConfig.DEBUG);
+            try(InputStream in=getTargetContext().getAssets().open("build-info.json")){
+                JSONObject build=new JSONObject(new String(in.readAllBytes(),StandardCharsets.UTF_8));
+                check(build.getInt("version_code")==9&&BuildConfig.VERSION_CODE==9);
+                check(build.getString("source_commit").equals(BuildConfig.SOURCE_COMMIT)&&build.getBoolean("working_tree_dirty")==BuildConfig.SOURCE_DIRTY);
+            }
+            checks+=ReceiptClassificationAuditTest.run();
             PaddleOcr.verifyAssets(getTargetContext().getAssets());checks++;
             JSONArray fixtures;
             try(InputStream in=getContext().getAssets().open("synthetic-manifest.json")){

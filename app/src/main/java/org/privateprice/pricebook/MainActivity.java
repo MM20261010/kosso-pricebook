@@ -51,7 +51,7 @@ public final class MainActivity extends Activity {
     private String lastDate=LocalDate.now().toString();
     private Uri cameraUri;
     private File cameraFile;
-    private String reviewText="";
+    private String reviewText="",reviewOrigin="not_set";
     private OcrDocument paddleDocument,reviewDocument;
     private ReceiptReview reviewModel; private String reviewedText="";
     private volatile boolean ocrRunning;
@@ -69,9 +69,9 @@ public final class MainActivity extends Activity {
                 cameraFile=new File(savedPhoto);
                 cameraUri=FileProvider.getUriForFile(this,getPackageName()+".fileprovider",cameraFile);
             }
-            reviewText=savedInstanceState.getString("review_text","");
+            reviewText=savedInstanceState.getString("review_text","");reviewOrigin="restored_text:"+savedInstanceState.getString("review_origin","unknown");
         }
-        if(getLastNonConfigurationInstance() instanceof ReceiptReview){reviewModel=(ReceiptReview)getLastNonConfigurationInstance();reviewedText=reviewText;}
+        if(getLastNonConfigurationInstance() instanceof ReceiptReview){reviewModel=(ReceiptReview)getLastNonConfigurationInstance();reviewedText=reviewText;reviewOrigin="retained_review:"+(savedInstanceState==null?"unknown":savedInstanceState.getString("review_origin","unknown"));}
         if(savedInstanceState!=null)tab=savedInstanceState.getInt("tab",0);
         frame=new LinearLayout(this);frame.setOrientation(LinearLayout.VERTICAL);frame.setBackgroundColor(BG);
         frame.setPadding(dp(14),dp(10),dp(14),0);
@@ -237,7 +237,7 @@ public final class MainActivity extends Activity {
             for(ReceiptParser.Candidate c:parsed.items)candidates.append(c.name).append(" / 行金額 ").append(c.price).append("円（").append(ReceiptParser.basisLabel(c.amountBasis)).append("） / 数量 ").append(c.quantity==null?"未確定":c.quantity).append('\n');
             card.addView(text(candidates.toString(),14,false,INK));
             TextView raw=text("元の認識テキスト：\n"+original,13,false,MUTED);raw.setTextIsSelectable(true);card.addView(raw);
-            Button show=button("この結果で確認・修正画面を開く",()->{if(ocrRunning){toast("読み取り中です");return;}selectedOcr=engine;reviewText=original;reviewDocument=document;reviewModel=null;render();});card.addView(show);box(card);
+            Button show=button("この結果で確認・修正画面を開く",()->{if(ocrRunning){toast("読み取り中です");return;}selectedOcr=engine;reviewText=original;reviewOrigin=engine;reviewDocument=document;reviewModel=null;render();});card.addView(show);box(card);
         }
         hint("時間はモデル検証・初期化とOCRを含み、画像展開は含みません。メモリは200ms間隔で採ったプロセスPSSの最大標本です。正確なネイティブピークやエンジン単独の使用量ではありません。");
     }
@@ -274,7 +274,7 @@ public final class MainActivity extends Activity {
                 if(fail!=null){render();new AlertDialog.Builder(this).setTitle("OCRを実行できませんでした").setMessage(fail+"\n画像・認識内容は送信していません。手入力も使えます。").setPositiveButton("閉じる",null).show();return;}
                 selectedOcr=engine;
                 if(engine.equals("Tesseract")){tesseractOriginal=output;tesseractStats=stats;}else{paddleOriginal=output;paddleStats=stats;paddleDocument=recognizedDocument;}
-                reviewText=output;reviewDocument=recognizedDocument;reviewModel=null;if(output.isEmpty())toast("文字が見つかりませんでした。明るい場所で撮影し直してください");render();
+                reviewText=output;reviewOrigin=engine;reviewDocument=recognizedDocument;reviewModel=null;if(output.isEmpty())toast("文字が見つかりませんでした。明るい場所で撮影し直してください");render();
             });
         },"local-receipt-ocr").start();
     }
@@ -309,6 +309,7 @@ public final class MainActivity extends Activity {
         }
         if(!model.items.isEmpty())content.addView(button("選択した確認済み商品を一括保存",()->saveReviewed(model)));
         LinearLayout details=disclosure("レシート詳細・集計・認識テキスト",content);
+        if(BuildConfig.DEBUG)details.addView(button("ビルド・領域別の分類理由（端末内だけ）",()->showClassificationAudit(receipt)));
         details.addView(text(receipt.reconciliation(),13,false,MUTED));
         for(String warning:receipt.warnings)details.addView(text("・"+warning,13,false,MUTED));
         for(ReceiptParser.TaxBreakdown b:receipt.taxBreakdowns)details.addView(text(b.rate+"% 対象額 "+b.base+"円 / 税額 "+b.tax+"円"+(b.uncertain?"（競合）":""),13,false,MUTED));
@@ -322,8 +323,23 @@ public final class MainActivity extends Activity {
         }
         details.addView(text("再解析では未保存の修正を破棄します。画面回転時は確認中の明細をメモリ内に保持します。アプリ終了後は画像を選び直してください。",13,false,MUTED));
         EditText raw=new EditText(this);raw.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(32000)});raw.setText(reviewText);raw.setMinLines(4);raw.setMaxLines(8);details.addView(raw);
-        details.addView(button("原文を修正して再解析",()->new AlertDialog.Builder(this).setMessage("未保存の明細修正を破棄して再解析しますか？").setNegativeButton("戻る",null).setPositiveButton("再解析",(d,w)->{reviewText=raw.getText().toString();reviewDocument=null;reviewModel=null;render();}).show()));
+        details.addView(button("原文を修正して再解析",()->new AlertDialog.Builder(this).setMessage("未保存の明細修正を破棄して再解析しますか？").setNegativeButton("戻る",null).setPositiveButton("再解析",(d,w)->{reviewText=raw.getText().toString();reviewOrigin="edited_text";reviewDocument=null;reviewModel=null;render();}).show()));
         details.addView(button("OCR結果を破棄",()->new AlertDialog.Builder(this).setMessage("確認中の明細を破棄しますか？").setNegativeButton("戻る",null).setPositiveButton("破棄",(d,w)->{reviewText="";reviewDocument=null;reviewModel=null;render();}).show()));
+    }
+    private String buildIdentity(){return "v"+BuildConfig.VERSION_NAME+" / versionCode "+BuildConfig.VERSION_CODE+"\nソース "+BuildConfig.SOURCE_COMMIT+(BuildConfig.SOURCE_DIRTY?"（未コミット変更あり）":"（コミット済みソース）")+"\n解析 "+BuildConfig.PARSER_REVISION;}
+    private void showClassificationAudit(ReceiptParser.Receipt receipt){
+        if(!BuildConfig.DEBUG)return;
+        LinearLayout body=col();body.setPadding(dp(16),dp(8),dp(16),dp(20));ScrollView scroll=new ScrollView(this);scroll.addView(body);
+        body.addView(text(buildIdentity(),13,true,INK));
+        body.addView(text("解析経路："+receipt.analysisMode+" / 元の操作："+reviewOrigin+"\n候補 "+receipt.items.size()+"件 / 入力行 "+receipt.decisions.size()+"件\nPOSITIONEDは検出座標あり、TEXTは座標なしです。以下は端末内表示のみで、保存・ログ・送信は行いません。原文や管理番号を共有しないでください。",13,false,MUTED));
+        for(ReceiptParser.Decision decision:receipt.decisions){
+            body.addView(text("行"+decision.row+" / 領域["+decision.regions+"] / "+decision.kind+"\n理由 "+decision.reason+" / 候補番号 "+decision.candidates,13,true,INK));
+            if(Double.isFinite(decision.left))body.addView(text(String.format(Locale.ROOT,"位置 %.0f,%.0f → %.0f,%.0f",decision.left,decision.top,decision.right,decision.bottom),12,false,MUTED));
+            LinearLayout privateText=disclosure("原文と正規化を端末内で照合",body);
+            privateText.addView(text("原文："+ReceiptParser.visibleText(decision.raw)+"\n正規化："+ReceiptParser.visibleText(decision.normalized),13,false,MUTED));
+        }
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("分類理由・調査用").setView(scroll).setPositiveButton("閉じる",null).create();
+        if(dialog.getWindow()!=null)dialog.getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);dialog.show();
     }
     private void watch(EditText edit,Runnable change){
         edit.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence s,int start,int count,int after){}public void onTextChanged(CharSequence s,int start,int before,int count){change.run();}public void afterTextChanged(android.text.Editable s){}});
@@ -410,6 +426,7 @@ public final class MainActivity extends Activity {
     private void showAdmin(){
         section("データは端末内だけ");
         hint("インターネット権限・位置情報権限・広告・解析ツールなし。買い物履歴はアプリ専用のSQLiteデータベースに保存します。");
+        if(BuildConfig.DEBUG)hint(buildIdentity());
         section("画像の扱い");
         hint("レシート画像は保存しません。比較中の画像はメモリ内だけに保持し、破棄・終了で消えます。任意の長期保管・閲覧機能は今回未実装です。JSONに画像・OCR原文・管理番号は含みません。外部カメラアプリが写真を保存する場合は、そのアプリ側で管理してください。");
         section("バックアップ / 復元");
@@ -461,7 +478,7 @@ public final class MainActivity extends Activity {
     }
     @Override protected void onSaveInstanceState(Bundle state){
         state.putString("camera_path",cameraFile==null?"":cameraFile.getAbsolutePath());
-        state.putString("review_text",reviewText);state.putInt("tab",tab);
+        state.putString("review_text",reviewText);state.putString("review_origin",reviewOrigin);state.putInt("tab",tab);
         super.onSaveInstanceState(state);
     }
     @Override public Object onRetainNonConfigurationInstance(){return reviewModel;}

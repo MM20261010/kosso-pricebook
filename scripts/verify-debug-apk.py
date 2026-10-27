@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check the built/downloaded v0.8 debug APK, without receipt data or network access."""
+"""Check the built/downloaded v0.8.1 debug APK, without receipt data or network access."""
 import hashlib
 import os
 import json
@@ -24,7 +24,7 @@ def run(tool, *args):
 run('apksigner', 'verify', apk)
 print('PASS APK signature')
 badging = run('aapt', 'dump', 'badging', apk)
-if "package: name='org.privateprice.pricebook' versionCode='8' versionName='0.8.0-debug-extraction'" not in badging:
+if "package: name='org.privateprice.pricebook' versionCode='9' versionName='0.8.1-debug-classification'" not in badging:
     raise SystemExit('Unexpected APK package/version')
 permissions = run('aapt', 'dump', 'permissions', apk)
 actual = re.findall(r"^uses-permission(?:-sdk-\d+)?: name='([^']+)'", permissions, re.MULTILINE)
@@ -34,8 +34,17 @@ manifest = run('aapt', 'dump', 'xmltree', apk, 'AndroidManifest.xml')
 for flag in ('allowBackup', 'fullBackupContent', 'usesCleartextTraffic'):
     if not re.search(r'android:' + flag + r'\(0x[0-9a-f]+\)=\(type 0x12\)0x0\s*$', manifest, re.MULTILINE):
         raise SystemExit('APK must disable ' + flag)
-print('PASS v0.8 package, permissions, backup and cleartext settings')
+print('PASS v0.8.1 package, permissions, backup and cleartext settings')
 with zipfile.ZipFile(apk) as archive:
+    identity=json.loads(archive.read('assets/build-info.json'))
+    if identity.get('version_code')!=9 or identity.get('version_name')!='0.8.1-debug-classification' or identity.get('parser_revision')!='receipt-structure-audit-1' or not re.fullmatch('[0-9a-f]{40}',identity.get('source_commit','')):
+        raise SystemExit('Unexpected embedded build provenance')
+    if not isinstance(identity.get('working_tree_dirty'),bool):
+        raise SystemExit('Missing source worktree state')
+    expected=os.environ.get('EXPECTED_SOURCE_COMMIT') or os.environ.get('GITHUB_SHA')
+    if expected and (identity['source_commit']!=expected or identity.get('working_tree_dirty') is not False):
+        raise SystemExit('APK source commit differs from requested build')
+    print('PASS embedded source commit: '+identity['source_commit']+(' (dirty local source)' if identity['working_tree_dirty'] else ' (clean source)'))
     for lang, expected in (
         ('eng', '7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2'),
         ('jpn', '1f5de9236d2e85f5fdf4b3c500f2d4926f8d9449f28f5394472d9e8d83b91b4d'),
