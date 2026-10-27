@@ -70,6 +70,9 @@ public final class ReceiptExtractionTest {
         r=ReceiptParser.parseReceipt("架空豆腐490\n@245×2\n架空スポンジ359\n2点");check(r.items.get(1).quantity==null,"bare count not borrowed without matching printed unit");
         r=ReceiptParser.parseReceipt("架空豆腐490\n@245×2\n架空スポンジ 単価359 359\n2点");check(r.items.get(1).quantity==null&&r.items.get(1).unitPrice==359,"bad count does not erase independent matching printed unit");
         r=ReceiptParser.parseReceipt("架空豆腐490\n小汁1008点490\n税額合計39\n合計529");check(r.items.size()==1&&r.subtotal==490&&r.printedItemCount==null,"oversized summary count never becomes an item or a truncated eight");
+        for(String heading:new String[]{"小計金額","小計額","商品合計"})check(Long.valueOf(399).equals(ReceiptParser.parseReceipt("架空洗剤399\n"+heading+"399\n合計399").subtotal),"standard subtotal label retained");
+        for(String heading:new String[]{"合計金額","総合計額"})check(Long.valueOf(399).equals(ReceiptParser.parseReceipt("架空洗剤399\n"+heading+"399").total),"standard total label retained");
+        check(ReceiptParser.parseReceipt("合計金額ノート399").items.size()==1,"product following an aggregate-like prefix retained");
         System.out.println("PASS ReceiptExtraction "+checks+" checks (fictional corrupted OCR only)");
     }
 }

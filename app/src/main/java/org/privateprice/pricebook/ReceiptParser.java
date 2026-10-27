@@ -140,8 +140,8 @@ public final class ReceiptParser {
         if(t.matches(".*(?:値引|值引|割引|クーポン|返品|返金|ポイント利用).*"))return Kind.DISCOUNT;
         if(t.matches("^(?:購入点数|商品点数|お買上げ?点数|お買い上げ点数|買上点数|合計点数|点数|数量合計|購入数).*"))return Kind.COUNT_TOTAL;
         if(t.matches("^(?:数量|個数).*"))return Kind.QUANTITY;
-        if(summary.matches("(?i)(?:小計|商品計|本体価格合計|SUBTOTAL)"))return Kind.SUBTOTAL;
-        if(summary.matches("(?i)(?:総合計|総計|総額|合計|お買上金額|お買い上げ金額|お買上げ金額|お支払(?:い)?(?:金額|合計)|支払(?:い)?金額|TOTAL)")||t.matches("^計[¥0-9].*"))return Kind.TOTAL;
+        if(summary.matches("(?i)(?:小計|商品計|商品合計|本体価格合計|SUBTOTAL)(?:金額|額)?"))return Kind.SUBTOTAL;
+        if(summary.matches("(?i)(?:総合計|総計|総額|合計|お買上金額|お買い上げ金額|お買上げ金額|お支払(?:い)?(?:金額|合計)|支払(?:い)?金額|TOTAL)(?:金額|額)?")||t.matches("^計[¥0-9].*"))return Kind.TOTAL;
         if(t.matches(".*(?:消費税|税額|税金|内税|外税|課税対象|軽減税率|税率|対象額|対象金額).*" )||t.matches("(?i)^(?:[0-9]+%|[(*※]?軽減|税計|税合計|内計|税[0-9¥]|点計|税込|税抜|非課税|課税|うち税|内消費|対象|TAX).*"))return Kind.TAX;
         if(t.matches("(?i)^(?:現金|現計|預り|預かり|お預|釣|お釣|おつり|クレジット|カード|支払|お支払|お買上|お買い上げ|お買上げ|電子マネー|電子決済|決済|残高|ポイント|獲得|今回|累計|利用可能|チャージ|入金|PayPay|楽天ペイ|交通系|商品券|領収|登録番号|店番号|店番|店舗番号|店No|店舗No|TEL|電話|営業時間|住所|〒|STORE(?:NO|NUMBER)|REG(?:ISTER)?(?:NO|NUMBER|ID|[0-9:#.])|POS(?:NO|NUMBER|ID|[0-9:#.])|SHOP(?:NO|NUMBER|CODE|ID)|CASH|CHANGE|CREDIT|VISA|MASTERCARD|PAYMENT).*"))return Kind.PAYMENT;
         if(t.matches(".*(?:支払|決済|クレジット|ICカード|取引番号|伝票番号|レシート番号).*"))return Kind.PAYMENT;

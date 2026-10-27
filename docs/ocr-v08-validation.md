@@ -36,7 +36,7 @@
 
 ## 検証状態
 
-基礎回帰は320件（PriceMath7 / Parser40 / Layout60 / Unit48 / Extraction160 / Image5）が合格。ローカルAPK/テストAPKビルド、Lint（エラー0・既存警告6）、Manifest・同梱モデルSHA・ELF・署名の検証も合格。GitHub ActionsとAndroidの最終結果は完了後に追記する。
+基礎回帰は326件（PriceMath7 / Parser40 / Layout60 / Unit48 / Extraction166 / Image5）が合格。ローカルAPK/テストAPKビルド、Lint（エラー0・既存警告6）、Manifest・同梱モデルSHA・ELF・署名の検証も合格。GitHub ActionsとAndroidの最終結果は完了後に追記する。
 
 - **機能**：既存の購入単価・買い物メモ・店舗別比較・履歴・JSONを維持。今回の破損データをAndroidでも実行し、コードを含まない名称と確認済み税込単価の保存/再表示、新旧JSON、既存DB移行を検証する。
 - **プライバシー**：PaddleOCR v5+ncnn FP32とTesseractを端末内実行、モデルは同梱、通信権限・外部OCR・自動収集・追跡・新規SDKなし。実レシート・識別情報・購入情報はGitHub/CIへ登録しない。管理コードとOCR原文はDB/JSONへ保存しない。
