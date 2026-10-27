@@ -19,7 +19,7 @@
 
 今回の固定架空データは、同じ6商品・位置・金額・単価×数量を保ち、要因を分けて変更する。実店舗名・実管理番号・実OCRの転記は使わない。管理ラベルのI/O/0等の文字崩れ、小計の分割領域と「点→占」を使い、出力し得る文字かを同梱PP-OCRv5辞書でも確認した。辞書にない「奌」や不可視形式文字は直接Paddle出力の再現要因から除いた。不可視文字の表示・正規化は、編集テキスト等の副経路の防御に留め、実機失敗原因とは主張しない。
 
-| 入力条件 | v0.8（旧ソース） | 新処理（ソース） |
+| 入力条件 | 配布v0.8 APK（Android ART） | 新APK（Android ART） |
 |---|---:|---:|
 | 前回の再現条件 | 6 | 6 |
 | 管理行を日付の上へ移すだけ | 6 | 6 |
@@ -62,7 +62,25 @@ v0.8.1 / versionCode **9**。`assets/build-info.json` とBuildConfigに、ソー
 
 ## 5. 検証状態
 
-従来回帰と、上記の要因分離・分類理由・座標消失・日付が下にある逆方向条件をJVMで検証済み。ローカルAPK/テストAPK/Lintと、GitHub Actions・エミュレータの最終結果は完了後に追記する。
+[Actions最終実行40512339576](https://github.com/MM20261010/kosso-pricebook/actions/runs/40512339576)は全工程成功。以下を確認した。
+
+- 従来回帰326件と、分類理由・判定信号・座標消失・日付が下にある逆方向条件22件（計348件）をJVMで検証。
+- **元の署名付き配布v0.8 APKのDEXをAndroid ARTで実行**し、上表の6/6/7/7/8件を確認。新APKそのもののDEXでは6/6/6/6/6件。両APKとも各条件の79×2=158、245×2=490を維持。基準APKのSHAとversionCode8も検証し、再署名/インストールはしていない。これはソースの再コンパイルだけの比較ではない。
+- Android 35 AOSP x86_64エミュレータは351チェック合格。架空画像8種類の両OCR、同一画素保持、共用の破損データ回帰、分類理由、旧SQLite/新旧JSON、明示保存後の単価・メモ/履歴、合成画面描画を検査。
+- APK/テストAPKビルド、Lintエラー0（ローカル既存警告6）、Manifestの通信権限なし/バックアップ無効、モデルSHA・固定入手元・同梱ライセンス、Paddle ELF NX/RELRO/非RWX/16K、ネットワーク/プロセス起動API未参照、署名、zipalignが合格。
+- 実APKを再取得し、**埋め込みコミット=Actionsのhead SHA**、dirty=false、versionCode9、構造分類と判定信号のDEXを確認。異なるコミットを要求した検証は拒否されることもローカルで検査。
+
+### 調査用APKの取得
+
+- [Artifacts：kosso-pricebook-debug-v0.8.1](https://github.com/MM20261010/kosso-pricebook/actions/runs/40512339576/artifacts/12739625636)。GitHubログイン後、ZIPを取得・解凍し、中の `app-debug.apk` を使用。
+- versionCode **9** / `0.8.1-debug-classification`。
+- 埋め込みソース `066a470469b63922cccff88b1f95b48e8e7306cc` / `working_tree_dirty=false` / `receipt-structure-audit-1`。以後の結果追記コミットは文書のみ。
+- APK 72,609,207 bytes（69.2 MiB）、v0.8比+276 bytes。SHA-256：`8284154453627d52d6bbaedb71c2bd2f6860d38cc17e3be3d69e93f85becd7a5`。
+- 署名証明書SHA-256：`5eb1a06783a267510496cf1eab7f7b2fb37e8170871deb2c4055fc60b0c7a21a`。
+- 期限：**2026-11-10 22:47:14 JST**。
+- [PR #6](https://github.com/MM20261010/kosso-pricebook/pull/6) はv0.8への積み重ね。#1〜#6は未マージ、mainへのマージはしていない。`40510865236` は診断信号追加前に取消し、成功判定/配布案内には使わない。
+
+v0.8の署名 `c8b34725e7e9a06e74caf6e13e6fbf563bb284cef38e29f2022669916efaa0d3` と異なるため上書きできない。**旧アプリでJSONを端末内へ書き出し、ファイルを確認してから**旧アプリ削除→新APKインストール→JSON復元する。退避前の削除は履歴を消す。DB/JSON形式は変更していない。JSONは画像/OCR原文/診断を含まないため、同じ写真で比較する場合は端末側の原画像を使用する。
 
 Actionsは手動のみ。今回の手動実行では `compare_v08_apk=true` を指定し、期限内の元Artifactを取得。SHA-256とversionCode 8を確認した**元の署名付きv0.8 APK**を再署名/インストールせず、Android ARTのクラスパスで同一の固定架空入力に通す。新APKにも同じプローブを通す。購入DB・実レシートを読む経路はない。比較を指定しない将来の手動ビルドは、旧Artifactの期限に依存せず新APKの検証を実行できる。
 
