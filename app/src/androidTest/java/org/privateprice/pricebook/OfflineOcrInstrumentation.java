@@ -106,6 +106,7 @@ public final class OfflineOcrInstrumentation extends Instrumentation {
                     if(file.equals("multiline-clean.png"))check(receipt.items.stream().anyMatch(c->Integer.valueOf(2).equals(c.quantity)&&Long.valueOf(100).equals(c.unitPrice)));
                 }finally{image.recycle();}
             }
+            ReceiptExtractionTest.main(new String[0]);checks+=ReceiptExtractionTest.checks;
             // Never open/delete the real purchase database, even if this runner is invoked on a phone.
             File folder=new File(getTargetContext().getCacheDir(),"synthetic-db-test");
             if(!folder.isDirectory()&&!folder.mkdirs())throw new IllegalStateException();
@@ -139,10 +140,10 @@ public final class OfflineOcrInstrumentation extends Instrumentation {
                 JSONObject focus=null;for(int i=0;i<fixtures.length();i++)if(fixtures.getJSONObject(i).getString("id").equals("v07-unit-layout"))focus=fixtures.getJSONObject(i);check(focus!=null);
                 Bitmap fake;try(InputStream in=getContext().getAssets().open(focus.getString("image"))){fake=BitmapFactory.decodeStream(in);}
                 ReceiptParser.Receipt parsed;try{parsed=ReceiptParser.parseDocument(PaddleOcr.recognizeDocument(getTargetContext(),fake));}finally{fake.recycle();}
-                reviewUi(isolated,parsed);
+                reviewUi(isolated,parsed);parsed=ReceiptExtractionTest.parsed(0);reviewUi(isolated,parsed);
                 ReceiptReview model=new ReceiptReview(parsed);check(model.items.size()==6);check(model.items.stream().noneMatch(i->i.selected||i.grossUnit!=null||i.taxRate!=null));
                 // No inferred item tax allocation: gross 86 for the 79x2 row is a HUMAN test input.
-                ReceiptReview.Item two=model.items.get(1);check(two.printedUnit==79&&two.quantity==2&&two.lineAmount==158);two.grossUnit=86L;two.taxRate=null;two.selected=true;check(two.ready());
+                ReceiptReview.Item two=model.items.get(1);check(two.printedUnit==79&&two.quantity==2&&two.lineAmount==158);two.grossUnit=86L;two.taxRate=null;two.selected=true;check(!two.ready());two.codeConfirmed=true;check(two.ready());
                 PriceDb.Purchase reviewed=new PriceDb.Purchase();reviewed.name=two.name;reviewed.key=PriceMath.key(two.name);reviewed.store=model.store;reviewed.date=model.date;reviewed.gross=two.grossUnit;reviewed.quantity=two.quantity;reviewed.taxKnown=false;reviewed.tax=0;reviewed.unit="";reviewed.printedUnit=two.printedUnit;reviewed.lineAmount=two.lineAmount;reviewed.specification=two.specification;reviewed.basis=two.basis.name();
                 db.addReceiptPurchases(java.util.Collections.singletonList(reviewed),parsed,model.store,model.date);
                 db.addMemo(reviewed.name,2);check(db.allMemos().stream().anyMatch(m->m.key.equals(reviewed.key)));

@@ -209,7 +209,7 @@ public final class MainActivity extends Activity {
         if(comparisonImage!=null){comparisonImage.recycle();comparisonImage=null;}
     }
     private void showComparison(){
-        section("v0.7 端末内OCR比較");
+        section("v0.8 端末内OCR比較");
         hint("同じ展開画像を両方式で読み直せます。比較結果は購入履歴に自動保存しません。元テキストはこの画面内だけで確認できます。画面回転・終了で比較画像は破棄します。");
         RadioGroup engines=new RadioGroup(this);engines.setOrientation(RadioGroup.VERTICAL);
         for(String label:new String[]{"Tesseract","PaddleOCR v5 / ncnn"}){
@@ -332,6 +332,7 @@ public final class MainActivity extends Activity {
     private void editReviewItem(ReceiptReview.Item item){
         LinearLayout form=col();form.setPadding(dp(16),dp(4),dp(16),dp(20));ScrollView scroll=new ScrollView(this);scroll.addView(form);
         EditText name=labeled(form,"商品名",item.name,InputType.TYPE_CLASS_TEXT);
+        CheckBox codeCheck=new CheckBox(this);codeCheck.setText("先頭コード分離後の商品名を原票で確認した（型番・ブランドなら商品名を戻す）");codeCheck.setChecked(item.codeConfirmed);if(item.source.codeUncertain)form.addView(codeCheck);
         EditText spec=labeled(form,"容量・規格（名称にも残して別規格と区別）",item.specification,InputType.TYPE_CLASS_TEXT);
         EditText qty=labeled(form,"購入数量（容量・規格とは別）",item.quantity==null?"":item.quantity.toString(),InputType.TYPE_CLASS_NUMBER);
         EditText printed=labeled(form,"印字単価（1点分）",item.printedUnit==null?"":item.printedUnit.toString(),InputType.TYPE_CLASS_NUMBER);
@@ -341,7 +342,7 @@ public final class MainActivity extends Activity {
         EditText gross=labeled(form,"確認した税込単価（1点分・値引後）",item.grossUnit==null?"":item.grossUnit.toString(),InputType.TYPE_CLASS_NUMBER);
         EditText tax=labeled(form,"確認した税率 %（不明なら空欄）",item.taxRate==null?"":priceFormat.format(item.taxRate),InputType.TYPE_CLASS_NUMBER|InputType.TYPE_NUMBER_FLAG_DECIMAL);
         CheckBox sale=new CheckBox(this);sale.setText("特売・値引きあり");sale.setChecked(item.sale);form.addView(sale);
-        LinearLayout original=disclosure("原文・記号を照合",form);original.addView(text(item.source.raw+"\n管理記号："+item.source.markers+"（税率は推測しません）",13,false,MUTED));
+        LinearLayout original=disclosure("原文・記号を照合",form);original.addView(text(item.source.raw+"\n先頭コード分離候補："+item.source.managementCode+"\n管理記号："+item.source.markers+"（税率は推測しません）",13,false,MUTED));
         AlertDialog dialog=new AlertDialog.Builder(this).setTitle("商品を確認・修正").setView(scroll).setNegativeButton("戻る",null).setPositiveButton("修正を反映",null).create();
         dialog.setOnShowListener(v->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(btn->{
             try{
@@ -350,7 +351,7 @@ public final class MainActivity extends Activity {
                 Long pu=optionalAmount(printed),gu=optionalAmount(gross),la=optionalAmount(line);if(la==null||la<1||q!=null&&(q<1||q>999))throw new IllegalArgumentException();
                 Double rate=tax.getText().toString().trim().isEmpty()?null:Double.valueOf(tax.getText().toString().trim());if(rate!=null&&(!Double.isFinite(rate)||rate<0||rate>100))throw new IllegalArgumentException();
                 int selected=0;for(int n=0;n<3;n++)if(basis.getCheckedRadioButtonId()==ids[n])selected=n;
-                item.name=nm;item.specification=sp;item.quantity=q;item.printedUnit=pu;item.lineAmount=la;item.basis=ReceiptParser.AmountBasis.values()[selected];item.grossUnit=gu;item.taxRate=rate;item.sale=sale.isChecked();item.detailsConfirmed=true;
+                item.codeConfirmed=!item.source.codeUncertain||codeCheck.isChecked();item.name=nm;item.specification=sp;item.quantity=q;item.printedUnit=pu;item.lineAmount=la;item.basis=ReceiptParser.AmountBasis.values()[selected];item.grossUnit=gu;item.taxRate=rate;item.sale=sale.isChecked();item.detailsConfirmed=true;
                 dialog.dismiss();render();
             }catch(Exception e){toast("名前・金額・数量・税率の範囲を確認してください。未確定値は空欄にできます。");}
         }));dialog.show();
@@ -366,12 +367,14 @@ public final class MainActivity extends Activity {
         RadioGroup rounding=new RadioGroup(this);int[] ids=new int[3];String[] roundLabels={"1点単価ごとに切り捨て","1点単価ごとに四捨五入","1点単価ごとに切り上げ"};
         for(int n=0;n<3;n++){RadioButton b=new RadioButton(this);ids[n]=View.generateViewId();b.setId(ids[n]);b.setText(roundLabels[n]);rounding.addView(b);}form.addView(rounding);
         CheckBox one=new CheckBox(this);one.setText("数量未確定の選択商品は、原票で1点と確認した");form.addView(one);
+        CheckBox codeCheck=new CheckBox(this);codeCheck.setText("先頭コード分離候補の名称も原票で確認した（型番・ブランドは商品詳細で戻す）");boolean needsCode=false;for(ReceiptReview.Item i:selected)needsCode|=!i.codeConfirmed;if(needsCode)form.addView(codeCheck);
         CheckBox checked=new CheckBox(this);checked.setText("選択商品の名称・数量・価格区分・値引を原票で確認した（混在税率は分けて選択）");form.addView(checked);
         form.addView(text("税抜換算は、1点単位の端数処理を確認できる場合だけ使ってください。合計・税区分単位で処理される場合や割引は、商品詳細で税込単価を手入力してください。C/Vから税率は決めません。",13,false,MUTED));
         AlertDialog dialog=new AlertDialog.Builder(this).setTitle(selected.size()+"商品の単価を確認").setView(scroll).setNegativeButton("戻る",null).setPositiveButton("確認値を反映（保存は別）",null).create();
         dialog.setOnShowListener(v->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(btn->{
             try{
                 if(!checked.isChecked()||modes.getCheckedRadioButtonId()==-1)throw new IllegalArgumentException("確認欄と価格区分を選んでください");
+                for(ReceiptReview.Item i:selected)if(!i.codeConfirmed&&!codeCheck.isChecked())throw new IllegalArgumentException("先頭コードの分離候補を原票で確認してください");
                 boolean isNet=modes.getCheckedRadioButtonId()==net.getId();Double rate=tax.getText().toString().trim().isEmpty()?null:Double.valueOf(tax.getText().toString().trim());
                 if(rate!=null&&(!Double.isFinite(rate)||rate<0||rate>100))throw new IllegalArgumentException("税率の範囲を確認してください");
                 ReceiptReview.Rounding method=null;for(int n=0;n<3;n++)if(rounding.getCheckedRadioButtonId()==ids[n])method=ReceiptReview.Rounding.values()[n];
@@ -381,7 +384,7 @@ public final class MainActivity extends Activity {
                     if(i.source.taxRate!=null&&rate!=null&&i.source.taxRate.doubleValue()!=rate)throw new IllegalArgumentException("印字税率と異なります。商品詳細で個別に確認してください");
                     units.add(ReceiptReview.confirmedUnit(copy,isNet,rate,method));
                 }
-                for(int n=0;n<selected.size();n++){ReceiptReview.Item i=selected.get(n);if(i.quantity==null&&one.isChecked())i.quantity=1;i.grossUnit=units.get(n);i.taxRate=rate;i.detailsConfirmed=true;}
+                for(int n=0;n<selected.size();n++){ReceiptReview.Item i=selected.get(n);if(i.quantity==null&&one.isChecked())i.quantity=1;i.grossUnit=units.get(n);i.taxRate=rate;i.detailsConfirmed=true;if(codeCheck.isChecked())i.codeConfirmed=true;}
                 dialog.dismiss();render();
             }catch(Exception e){toast(e instanceof IllegalArgumentException&&e.getMessage()!=null?e.getMessage():"値を確認してください");}
         }));dialog.show();
@@ -418,7 +421,7 @@ public final class MainActivity extends Activity {
         content.addView(button("JSONを復元（現在の記録と置換）",()->{
             Intent intent=new Intent(Intent.ACTION_OPEN_DOCUMENT);intent.addCategory(Intent.CATEGORY_OPENABLE);intent.setType("application/json");startActivityForResult(intent,RESTORE_BACKUP);
         }));
-        section("試作版 v0.7 品目単価の確認 / 予定");
+        section("試作版 v0.8 明細抽出の修正 / 予定");
         hint("✅ 買い物メモと店舗別の前回税込価格\n✅ レシート撮影・端末内OCR候補・まとめて保存の実装\n✅ 履歴と前回比、手入力・バックアップ\n✅ 自動バックアップなし・外部送信なし\n⌛ Android実機でのOCR精度・APK検証\n⌛ 同一商品の表記ゆれ学習\n⌛ 内容量・100g単価比較画面\n⌛ 減税制度確定後の税率更新");
         hint("F-Droid申請前の開発用ビルドです。公式掲載はまだ行っていません。");
     }

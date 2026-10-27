@@ -13,17 +13,18 @@ final class ReceiptReview {
         Integer quantity;
         Long grossUnit;
         Double taxRate;
-        boolean selected,sale;
-        Item(ReceiptParser.Candidate source){this.source=source;name=source.name;quantity=source.quantity;printedUnit=source.unitPrice;lineAmount=source.price;basis=source.amountBasis;specification=source.specification;}
+        boolean selected,sale,codeConfirmed;
+        Item(ReceiptParser.Candidate source){this.source=source;name=source.name;quantity=source.quantity;printedUnit=source.unitPrice;lineAmount=source.price;basis=source.amountBasis;specification=source.specification;codeConfirmed=!source.codeUncertain;}
         String equation(){return (printedUnit==null?"単価 ?":printedUnit+"円")+" × "+(quantity==null?"?":quantity)+"点 ＝ "+lineAmount+"円（"+ReceiptParser.basisLabel(basis)+"）";}
         String issue(){
-            if(!detailsConfirmed&&(source.uncertainLayout||source.nameSuffixUncertain))return "名称・位置を確認";
+            if(!codeConfirmed)return "先頭コードの分離を確認";
             if(quantity==null)return "数量を確認";
+            if(!detailsConfirmed&&(source.uncertainLayout||source.nameSuffixUncertain))return "名称・位置を確認";
             if(printedUnit!=null&&printedUnit*quantity!=lineAmount)return "単価×数量が不一致";
             if(grossUnit==null)return basis==ReceiptParser.AmountBasis.EXCLUSIVE?"税込単価を確認":"価格の区分を確認";
             return "";
         }
-        boolean ready(){return name!=null&&!name.trim().isEmpty()&&name.trim().length()<=120&&quantity!=null&&quantity>=1&&quantity<=999&&grossUnit!=null&&grossUnit>=1&&grossUnit<=1_000_000&&(taxRate==null||Double.isFinite(taxRate)&&taxRate>=0&&taxRate<=100);}
+        boolean ready(){return codeConfirmed&&name!=null&&!name.trim().isEmpty()&&name.trim().length()<=120&&quantity!=null&&quantity>=1&&quantity<=999&&grossUnit!=null&&grossUnit>=1&&grossUnit<=1_000_000&&(taxRate==null||Double.isFinite(taxRate)&&taxRate>=0&&taxRate<=100);}
     }
     final ReceiptParser.Receipt receipt;
     final List<Item> items=new ArrayList<>();
