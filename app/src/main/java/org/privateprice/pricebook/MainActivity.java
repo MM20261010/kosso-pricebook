@@ -334,6 +334,7 @@ public final class MainActivity extends Activity {
         body.addView(text("解析経路："+receipt.analysisMode+" / 元の操作："+reviewOrigin+"\n候補 "+receipt.items.size()+"件 / 入力行 "+receipt.decisions.size()+"件\nPOSITIONEDは検出座標あり、TEXTは座標なしです。以下は端末内表示のみで、保存・ログ・送信は行いません。原文や管理番号を共有しないでください。",13,false,MUTED));
         for(ReceiptParser.Decision decision:receipt.decisions){
             body.addView(text("行"+decision.row+" / 領域["+decision.regions+"] / "+decision.kind+"\n理由 "+decision.reason+" / 候補番号 "+decision.candidates,13,true,INK));
+            body.addView(text("判定信号（原文・番号・金額は含みません）：\n"+decision.evidence,12,false,MUTED));
             if(Double.isFinite(decision.left))body.addView(text(String.format(Locale.ROOT,"位置 %.0f,%.0f → %.0f,%.0f",decision.left,decision.top,decision.right,decision.bottom),12,false,MUTED));
             LinearLayout privateText=disclosure("原文と正規化を端末内で照合",body);
             privateText.addView(text("原文："+ReceiptParser.visibleText(decision.raw)+"\n正規化："+ReceiptParser.visibleText(decision.normalized),13,false,MUTED));

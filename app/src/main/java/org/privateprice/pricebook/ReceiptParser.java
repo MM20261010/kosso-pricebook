@@ -34,10 +34,10 @@ public final class ReceiptParser {
     }
     /** Ephemeral diagnostic only. Never included in PriceDb, backup, logs or external intents. */
     public static final class Decision {
-        public final int row;public final Kind kind;public final String reason,regions,raw,normalized;
+        public final int row;public final Kind kind;public final String reason,evidence,regions,raw,normalized;
         public final double left,top,right,bottom;public final List<Integer> candidates;
-        Decision(int row,Kind kind,String reason,ReceiptLayout.Row geometry,String regions,String raw,String normalized,List<Integer> candidates){
-            this.row=row;this.kind=kind;this.reason=reason;this.regions=regions;this.raw=raw;this.normalized=normalized;
+        Decision(int row,Kind kind,String reason,String evidence,ReceiptLayout.Row geometry,String regions,String raw,String normalized,List<Integer> candidates){
+            this.row=row;this.kind=kind;this.reason=reason;this.evidence=evidence;this.regions=regions;this.raw=raw;this.normalized=normalized;
             left=geometry==null?Double.NaN:geometry.left;top=geometry==null?Double.NaN:geometry.top;right=geometry==null?Double.NaN:geometry.right;bottom=geometry==null?Double.NaN:geometry.bottom;
             this.candidates=java.util.Collections.unmodifiableList(new ArrayList<>(candidates));
         }
@@ -99,7 +99,7 @@ public final class ReceiptParser {
     private static final Pattern COUNT_ONLY=Pattern.compile("^(?:数量\\s*|個数\\s*)?([0-9]{1,3})\\s*(?:個|点|本|袋|枚|パック)$");
     private static final Pattern COUNT_PREFIX=Pattern.compile("^(?:数量\\s*|個数\\s*)?([0-9]{1,3})\\s*(?:個|点|本|袋|枚|パック)(?:\\s+|$)");
     private static final Pattern NAMED_UNIT=Pattern.compile("(?:^|\\s)単価\\s*[¥]?("+MONEY+")円?");
-    private static final class Input {String text,code="",reason="UNCLASSIFIED_HELD";Kind finalKind=Kind.OTHER;Integer structuralCount,directCandidate;boolean structural,holdBoundary,codeUncertain;ReceiptLayout.Row row;Input(String s,ReceiptLayout.Row r){text=s;row=r;}}
+    private static final class Input {String text,code="",reason="UNCLASSIFIED_HELD",evidence="not_evaluated";Kind finalKind=Kind.OTHER;Integer structuralCount,directCandidate;boolean structural,holdBoundary,codeUncertain;ReceiptLayout.Row row;Input(String s,ReceiptLayout.Row r){text=s;row=r;}}
     private static final class Pending {String name,raw;Integer quantity;Long unit;ReceiptLayout.Row row;int parts=1;boolean uncertain;Pending(String name,ReceiptLayout.Row row){this.name=name;raw=name;this.row=row;}}
     private static final class Detail {Integer quantity;Long unit;}
     private static final class Amount {String name,markers;Long value;Integer rate;AmountBasis basis;boolean rateUncertain;}
@@ -194,7 +194,7 @@ public final class ReceiptParser {
             Kind k=in.finalKind;String reason=in.reason;
             if(k==Kind.OTHER&&!refs.isEmpty()){k=Kind.ITEM_DETAIL;reason="NAME_USED_IN_ITEM";}
             String regions="";if(in.row!=null){StringBuilder ids=new StringBuilder();for(ReceiptLayout.Part part:in.row.parts){if(ids.length()>0)ids.append(',');ids.append(part.sourceId+1);}regions=ids.toString();}
-            r.decisions.add(new Decision(i+1,k,reason,in.row,regions,in.row==null?in.text:in.row.text,normal(in.text),refs));
+            r.decisions.add(new Decision(i+1,k,reason,in.evidence,in.row,regions,in.row==null?in.text:in.row.text,normal(in.text),refs));
         }
         return r;
     }
@@ -314,6 +314,9 @@ public final class ReceiptParser {
             String s=normal(source);if(s.isEmpty()){if(++gap>2){pending=null;active=-1;}continue;}
             Kind k=kind(s);
             Amount positionedAmount=amount(s);
+            String heading=positionedAmount==null?s:positionedAmount.name;
+            in.evidence="dateAnchor="+(dateIndex<0?"none":dateIndex+1)+"; headerAnchor="+hasHeader+"; aboveDate="+(dateIndex>=0&&index<dateIndex)+"; adminSignals="+adminSignals(s)+"; identifierShape="+identifierShape(s)+"; smallHeading="+compact(heading).startsWith("小")+"; countHint="+(summaryCount(heading)!=null)+"; amountColumn="+amountColumn(input,index,imageWidth)+"; sumMatches="+(positionedAmount!=null&&positionedAmount.value!=null&&positionedAmount.value==r.itemSum())+"; futureSummary="+futureSummary(input,index)+"; itemsBefore="+r.items.size()+"; labelKind="+k;
+
             if(hasHeader&&index<dateIndex&&positionedAmount!=null&&positionedAmount.value!=null&&positionedAmount.value>0&&k==Kind.OTHER){
                 in.finalKind=adminSignals(s)>0||identifierShape(s)?Kind.MANAGEMENT:Kind.HELD;
                 in.reason=imageWidth>0?"PRE_DATE_HEADER_PRICE_HELD":"PRE_DATE_TEXT_PRICE_HELD";

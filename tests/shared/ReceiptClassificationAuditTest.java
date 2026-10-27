@@ -11,6 +11,7 @@ public final class ReceiptClassificationAuditTest {
         check(r.items.size()==6&&r.itemSum()==2872,"combined perturbation excludes both non-products");
         check(r.decisions.stream().anyMatch(d->d.reason.equals("PRE_DATE_HEADER_PRICE_HELD")&&d.candidates.isEmpty()),"pre-date reason excludes ID regardless of label accuracy");
         check(r.decisions.stream().anyMatch(d->d.reason.equals("SUBTOTAL_COLUMN_COUNT_SUM_FOOTER")&&d.kind==ReceiptParser.Kind.SUBTOTAL&&d.candidates.isEmpty()),"subtotal decision uses column/count/sum/footer");
+        check(r.decisions.stream().anyMatch(d->d.reason.equals("PRE_DATE_HEADER_PRICE_HELD")&&d.evidence.contains("aboveDate=true")&&!d.evidence.contains("12,345")),"failed/passed gate evidence can be reported without original identifiers");
         check(r.subtotal==2872&&r.subtotalUncertain&&r.printedItemCount==8&&r.taxAmount==268&&r.total==3140,"structural subtotal remains unconfirmed");
         check(r.decisions.stream().anyMatch(d->d.raw.equals("@79×2")&&d.candidates.contains(2)),"79 pair trace leads to its item");
         check(r.decisions.stream().anyMatch(d->d.raw.equals("@245×2")&&d.candidates.contains(4)),"245 pair trace leads to its item");
