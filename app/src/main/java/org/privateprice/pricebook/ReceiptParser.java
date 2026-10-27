@@ -23,6 +23,7 @@ public final class ReceiptParser {
         public final Long unitPrice;
         public final AmountBasis amountBasis;
         public final boolean uncertainLayout,nameSuffixUncertain;
+        public String managementCode=""; public boolean codeUncertain;
         Candidate(String n,long p,String r,Integer q,Long u,Integer t,String marks,AmountBasis basis,boolean uncertain){name=n;specification=specificationText(n);price=p;raw=r;quantity=q;unitPrice=u;taxRate=t;markers=marks;amountBasis=basis;uncertainLayout=uncertain;nameSuffixUncertain=n.matches(".*[CVcv]$")&&marks.toUpperCase(java.util.Locale.ROOT).contains(n.substring(n.length()-1).toUpperCase(java.util.Locale.ROOT));}
     }
     public static final class TaxBreakdown {
@@ -87,7 +88,7 @@ public final class ReceiptParser {
     private static final Pattern COUNT_ONLY=Pattern.compile("^(?:数量\\s*|個数\\s*)?([0-9]{1,3})\\s*(?:個|点|本|袋|枚|パック)$");
     private static final Pattern COUNT_PREFIX=Pattern.compile("^(?:数量\\s*|個数\\s*)?([0-9]{1,3})\\s*(?:個|点|本|袋|枚|パック)(?:\\s+|$)");
     private static final Pattern NAMED_UNIT=Pattern.compile("(?:^|\\s)単価\\s*[¥]?("+MONEY+")円?");
-    private static final class Input {String text;ReceiptLayout.Row row;Input(String s,ReceiptLayout.Row r){text=s;row=r;}}
+    private static final class Input {String text,code="";boolean codeUncertain;ReceiptLayout.Row row;Input(String s,ReceiptLayout.Row r){text=s;row=r;}}
     private static final class Pending {String name,raw;Integer quantity;Long unit;ReceiptLayout.Row row;int parts=1;boolean uncertain;Pending(String name,ReceiptLayout.Row row){this.name=name;raw=name;this.row=row;}}
     private static final class Detail {Integer quantity;Long unit;}
     private static final class Amount {String name,markers;Long value;Integer rate;AmountBasis basis;boolean rateUncertain;}
@@ -106,7 +107,7 @@ public final class ReceiptParser {
         return edits+(a.length()-i)+(b.length()-j)<=1;
     }
     private static Kind fuzzyKind(String s){
-        String t=label(s).replace("言十","計").replace("言ト","計");
+        String t=label(s).replace("言十","計").replace("言ト","計").replaceAll("[0-9]+(?:点|個)","");
         if(t.length()<2||t.length()>6)return Kind.OTHER;
         if(t.matches("[小少][計訐討汁什十]")||t.startsWith("商")&&oneEdit(t,"商品計"))return Kind.SUBTOTAL;
         if(t.matches("[合台含総總][計訐討汁什十]")||t.matches("[総總][額頭顔]"))return Kind.TOTAL;
@@ -114,22 +115,41 @@ public final class ReceiptParser {
         for(String a:new String[]{"点数","支払金額","現金","お釣り"})if(t.length()>=3&&oneEdit(t,a))return Kind.PAYMENT;
         return Kind.OTHER;
     }
-    private static Kind exactKind(String s){
+    private static boolean management(String s){
         String t=compact(s);
-        if(t.matches("(?i)^(?:取引(?:番号|No)?|レジ(?:番号|No)?|担当(?:者)?(?:番号|No)?|責任者|店(?:舗)?(?:番号|番|No)|店舗コード|商品コード|JAN(?:コード)?|SKU|伝票(?:番号)?|レシート番号|登録番号|会員番号|STORE(?:NO|NUMBER|CODE|ID)|REG(?:ISTER)?(?:NO|NUMBER|ID|[0-9:#.])|POS(?:NO|NUMBER|ID|[0-9:#.])|SHOP(?:NO|NUMBER|CODE|ID)).*"))return Kind.MANAGEMENT;
+        Matcher labels=Pattern.compile("(?i)(?:店(?:舗)?(?:番号|N[o0][.]?|コード|[:#])|レ[ジシ](?:番号|N[o0][.]?|[:#])?|担当(?:者)?(?:番号|N[o0][.]?|[:#])?|取[引弓](?:番号|N[o0][.]?|[:#])|伝票(?:番号|N[o0][.]?)|レシート(?:番号|N[o0][.]?)|(?:STORE|REG(?:ISTER)?|POS|SHOP)(?:NO[.]?|NUMBER|ID|CODE))[:：#.-]?[0-9]").matcher(t);
+        int count=0,first=-1,lastEnd=-1;while(labels.find()){if(first<0)first=labels.start();lastEnd=labels.end();count++;}
+        if(count==0)return t.matches("(?i)^(?:レジ|担当者?|責任者|取引|伝票|会員)(?:番号|N[o0][.]?)?$|^No[.:#][0-9,]+$");
+        // Two number labels are administration even when a store heading precedes them.
+        // A single label embedded in a product title is not enough.
+        return t.matches("(?i).*(?:取[引弓](?:番号|N[o0][.]?)|レ[ジシ](?:番号|N[o0][.]?)|担当者?(?:番号|N[o0][.]?))[:：#.-]?[0-9][0-9, .:#-]*$")||count>=2||first==0&&t.substring(lastEnd).matches("[0-9, .:#-]*")||t.substring(lastEnd).matches("[0-9, .:#-]*")&&t.substring(0,first).matches(".{0,100}(?:店|支店|店舗)");
+    }
+    private static boolean summaryEvidence(List<Input> input,int index,Receipt r,String s){
+        if(compact(s).matches(".*[0-9]{1,3}(?:点|個).*"))return true;
+        if(r.subtotal!=null)return true;
+        Long amount=lastAmount(s);if(!r.items.isEmpty()&&amount!=null&&amount==r.itemSum())return true;
+        for(int i=index+1;i<Math.min(input.size(),index+4);i++){
+            Kind k=kind(normal(input.get(i).text));if(k==Kind.TAX||k==Kind.TOTAL||k==Kind.SUBTOTAL||k==Kind.PAYMENT)return true;
+        }
+        return false;
+    }
+    private static Kind exactKind(String s){
+        String t=compact(s),summary=label(s).replaceAll("[0-9]+(?:点|個)","").replaceAll("税込|税抜","");
+        if(management(s)||t.matches("(?i)^(?:商品コード|JAN(?:コード)?|SKU)(?:商品名|品名|品目|行金額|金額).*"))return Kind.MANAGEMENT;
+        if(t.matches("(?i)^(?:商品コード|JAN(?:コード)?|SKU)(?:[0-9:：#].*|$)"))return Kind.MANAGEMENT;
         if(t.matches(".*(?:値引|值引|割引|クーポン|返品|返金|ポイント利用).*"))return Kind.DISCOUNT;
         if(t.matches("^(?:購入点数|商品点数|お買上げ?点数|お買い上げ点数|買上点数|合計点数|点数|数量合計|購入数).*"))return Kind.COUNT_TOTAL;
         if(t.matches("^(?:数量|個数).*"))return Kind.QUANTITY;
-        if(t.matches("(?i)^(?:小計|商品計|本体価格合計|SUBTOTAL).*"))return Kind.SUBTOTAL;
-        if(t.matches("(?i)^(?:総合計|総計|総額|税込合計|合計|計[¥0-9]|お買上金額|お買い上げ金額|お買上げ金額|お支払(?:い)?(?:金額|合計)|支払(?:い)?金額|TOTAL).*"))return Kind.TOTAL;
+        if(summary.matches("(?i)(?:小計|商品計|商品合計|本体価格合計|SUBTOTAL)(?:金額|額)?"))return Kind.SUBTOTAL;
+        if(summary.matches("(?i)(?:総合計|総計|総額|合計|お買上金額|お買い上げ金額|お買上げ金額|お支払(?:い)?(?:金額|合計)|支払(?:い)?金額|TOTAL)(?:金額|額)?")||t.matches("^計[¥0-9].*"))return Kind.TOTAL;
         if(t.matches(".*(?:消費税|税額|税金|内税|外税|課税対象|軽減税率|税率|対象額|対象金額).*" )||t.matches("(?i)^(?:[0-9]+%|[(*※]?軽減|税計|税合計|内計|税[0-9¥]|点計|税込|税抜|非課税|課税|うち税|内消費|対象|TAX).*"))return Kind.TAX;
-        if(t.matches("(?i)^(?:現金|現計|預り|預かり|お預|釣|お釣|おつり|クレジット|カード|支払|お支払|お買上|お買い上げ|お買上げ|電子マネー|電子決済|決済|残高|ポイント|獲得|今回|累計|利用可能|チャージ|入金|PayPay|楽天ペイ|交通系|商品券|領収|レジ|担当|責任者|会員|取引|伝票|レシート|登録番号|店番号|店番|店舗番号|店No|店舗No|TEL|電話|営業時間|住所|〒|No[.:#]|STORE(?:NO|NUMBER)|REG(?:ISTER)?(?:NO|NUMBER|ID|[0-9:#.])|POS(?:NO|NUMBER|ID|[0-9:#.])|SHOP(?:NO|NUMBER|CODE|ID)|CASH|CHANGE|CREDIT|VISA|MASTERCARD|PAYMENT).*"))return Kind.PAYMENT;
+        if(t.matches("(?i)^(?:現金|現計|預り|預かり|お預|釣|お釣|おつり|クレジット|カード|支払|お支払|お買上|お買い上げ|お買上げ|電子マネー|電子決済|決済|残高|ポイント|獲得|今回|累計|利用可能|チャージ|入金|PayPay|楽天ペイ|交通系|商品券|領収|登録番号|店番号|店番|店舗番号|店No|店舗No|TEL|電話|営業時間|住所|〒|STORE(?:NO|NUMBER)|REG(?:ISTER)?(?:NO|NUMBER|ID|[0-9:#.])|POS(?:NO|NUMBER|ID|[0-9:#.])|SHOP(?:NO|NUMBER|CODE|ID)|CASH|CHANGE|CREDIT|VISA|MASTERCARD|PAYMENT).*"))return Kind.PAYMENT;
         if(t.matches(".*(?:支払|決済|クレジット|ICカード|取引番号|伝票番号|レシート番号).*"))return Kind.PAYMENT;
         return Kind.OTHER;
     }
     private static Kind kind(String s){Kind k=exactKind(s);return k==Kind.OTHER?fuzzyKind(s):k;}
     private static boolean productName(String s){
-        return s.length()>=1&&s.length()<=120&&kind(s)==Kind.OTHER&&s.matches(".*[\\p{IsHan}\\p{IsHiragana}\\p{IsKatakana}A-Za-z].*")
+        return s.length()>=1&&s.length()<=120&&exactKind(s)==Kind.OTHER&&(fuzzyKind(s)==Kind.OTHER||fuzzyKind(s)==Kind.SUBTOTAL||fuzzyKind(s)==Kind.TOTAL)&&s.matches(".*[\\p{IsHan}\\p{IsHiragana}\\p{IsKatakana}A-Za-z].*")
             &&!s.matches(".*(?:スーパー|ストア|マート|株式会社|領収|支払い|点数).*")&&!s.matches("^(?:[0-9]+[点個本袋枚]|単価|税込|税抜|[¥@]).*")&&!s.matches(".*(?:店|支店)$");
     }
     private static boolean specification(String s){return s.matches("(?i)^[0-9]+(?:[.,][0-9]+)?\\s*(?:kg|g|ml|l|枚入|個入|本入|袋入|パック入).*" );}
@@ -151,12 +171,15 @@ public final class ReceiptParser {
     private static Long lastAmount(String s){Amount a=amount(s);return a==null?null:a.value;}
     private static void warn(Receipt r,String s){if(!r.warnings.contains(s))r.warnings.add(s);}
     private static Candidate candidate(Receipt r,String name,long value,String raw,Integer qty,Long unit,Integer rate,String marks,AmountBasis b,boolean uncertain){
-        if(qty!=null&&unit!=null&&unit*qty!=value)warn(r,"単価×数量と行金額が不一致の候補があります。");
+        if(qty!=null&&unit!=null&&unit*qty!=value){warn(r,"単価×数量と行金額が不一致のため数量・単価を未確定にしました。");qty=null;unit=null;uncertain=true;}
         if(!marks.isEmpty())warn(r,"C/V・※等の印は意味未確認です。印から税率を推測しません。");
         if(uncertain)warn(r,"位置関係による複数行の商品名結合候補があります。元の画像で確認してください。");
         Candidate c=new Candidate(name,value,raw,qty,unit,rate,marks,b,uncertain);
         if(c.nameSuffixUncertain)warn(r,"商品名末尾のC/Vは商品名の一部か印か未確定です。文字を勝手に削除しません。元の画像で確認してください。");
         return c;
+    }
+    private static Candidate codedCandidate(Candidate old,String raw){
+        Candidate next=new Candidate(old.name,old.price,raw+"\n"+old.raw,old.quantity,old.unitPrice,old.taxRate,old.markers,old.amountBasis,old.uncertainLayout);next.managementCode=old.managementCode;next.codeUncertain=old.codeUncertain;return next;
     }
     private static void tax(Receipt r,String s){
         s=s.replace('稅','税');
@@ -184,7 +207,9 @@ public final class ReceiptParser {
         List<Input> input=new ArrayList<>();for(String s:lines)input.add(new Input(s,null));return parseInputs(input,0);
     }
     public static Receipt parseDocument(OcrDocument doc){
-        if(doc==null)return new Receipt();List<Input> input=new ArrayList<>();List<ReceiptLayout.Row> rows=ReceiptLayout.rows(doc);for(ReceiptLayout.Row row:rows)input.add(new Input(ReceiptLayout.productText(row,rows),row));return parseInputs(input,doc.width);
+        if(doc==null)return new Receipt();List<Input> input=new ArrayList<>();List<ReceiptLayout.Row> rows=ReceiptLayout.rows(doc);
+        java.util.Map<ReceiptLayout.Row,ReceiptLayout.Code> codes=ReceiptLayout.codes(rows);
+        for(ReceiptLayout.Row row:rows){ReceiptLayout.Code code=codes.get(row);Input in=new Input(code==null?ReceiptLayout.productText(row,rows):code.text,row);if(code!=null){in.code=code.value;in.codeUncertain=code.uncertain;}input.add(in);}return parseInputs(input,doc.width);
     }
     private static Receipt parseInputs(List<Input> input,int imageWidth){
         Receipt r=new Receipt();boolean net=false,gross=false;int dateIndex=-1;
@@ -194,31 +219,37 @@ public final class ReceiptParser {
         }
         if(net!=gross)r.amountBasis=net?AmountBasis.EXCLUSIVE:AmountBasis.INCLUSIVE;
         if(net&&gross)warn(r,"税込・税抜表示が競合して未確定です。");r.includesTax=r.amountBasis==AmountBasis.INCLUSIVE;
-        Pending pending=null;int gap=0,active=-1;ReceiptLayout.Row activeRow=null;
+        Pending pending=null;int gap=0,active=-1;ReceiptLayout.Row activeRow=null;String waitingCode="",waitingCodeRaw="";int codeIndex=-10;
         boolean afterTotal=false,dateConflict=false,storeConflict=false,totalConflict=false,subtotalConflict=false;
         for(int index=0;index<input.size();index++){
             Input in=input.get(index);String source=in.text;
             if(in.row!=null&&!source.equals(in.row.text))r.lines.add(new Line(Kind.MANAGEMENT,in.row.text));
+            if(index-codeIndex>3){waitingCode="";waitingCodeRaw="";}
+            if(source.isEmpty()&&!in.code.isEmpty()){waitingCode=in.code;waitingCodeRaw=in.row.text;codeIndex=index;continue;}
             if(source.length()>240){pending=null;active=-1;warn(r,"長すぎる行を除外しました。");continue;}
             String s=normal(source);if(s.isEmpty()){if(++gap>2){pending=null;active=-1;}continue;}
-            if(in.row!=null&&in.row.uncertain){pending=null;active=-1;r.lines.add(new Line(Kind.OTHER,s));warn(r,"重なり・行位置が曖昧な領域は商品へ結合しませんでした。");continue;}
+            Kind k=kind(s);
+            if(k==Kind.MANAGEMENT){waitingCode="";waitingCodeRaw="";pending=null;active=-1;r.lines.add(new Line(k,in.row==null?s:in.row.text));continue;}
+            if((k==Kind.SUBTOTAL||k==Kind.TOTAL)&&exactKind(s)==Kind.OTHER&&!summaryEvidence(input,index,r,s))k=Kind.OTHER;
+            if(in.row!=null&&in.row.uncertain){pending=null;active=-1;if(k==Kind.SUBTOTAL||k==Kind.TOTAL)afterTotal=true;r.lines.add(new Line(k,s));warn(r,"重なり・行位置が曖昧な領域は商品へ結合しませんでした。");continue;}
             Matcher date=DATE.matcher(s);
             if(date.find()){
+                waitingCode="";waitingCodeRaw="";
                 try{String d=LocalDate.of(Integer.parseInt(date.group(1)),Integer.parseInt(date.group(2)),Integer.parseInt(date.group(3))).toString();if(!r.date.isEmpty()&&!r.date.equals(d))dateConflict=true;if(!dateConflict)r.date=d;}
                 catch(Exception e){dateConflict=true;warn(r,"実在しない日付を検出しました。");}
                 r.lines.add(new Line(Kind.DATE,s));pending=null;active=-1;gap=0;continue;
             }
-            Kind k=kind(s);
             boolean explicitStore=s.matches("(?i)^(?:店名|STORE)\\s*[:：].+");
             boolean namedStore=s.matches(".{2,100}(?:スーパー|ストア|マート|支店|店)$")||s.matches("(?i).{2,80}(?:SUPERMARKET|SUPER MARKET|MART|MARKET|STORE|SHOP)$");
             boolean englishHeader=index<dateIndex&&r.items.isEmpty()&&k==Kind.OTHER&&s.matches("[A-Za-z][A-Za-z .&'-]{1,80}");
             if(explicitStore||((namedStore||englishHeader)&&k==Kind.OTHER)){
+                waitingCode="";waitingCodeRaw="";
                 String shop=s.replaceFirst("(?i)^(?:店名|STORE)\\s*[:：]\\s*","");
                 if(!r.store.isEmpty()&&!r.store.equals(shop))storeConflict=true;if(!storeConflict)r.store=shop;
                 if(englishHeader&&!explicitStore&&!namedStore)warn(r,"英字の見出しを店名候補として抽出しました。確認してください。");
                 r.lines.add(new Line(Kind.STORE,s));pending=null;active=-1;gap=0;continue;
             }
-            if(declaration(s)){r.lines.add(new Line(Kind.TAX,s));pending=null;active=-1;continue;}
+            if(declaration(s)){waitingCode="";waitingCodeRaw="";r.lines.add(new Line(Kind.TAX,s));pending=null;active=-1;continue;}
             if(k==Kind.QUANTITY&&!afterTotal&&(pending!=null||active>=0)&&amount(s)!=null)k=Kind.OTHER;
             Detail d=detail(s);
             if(d!=null&&!afterTotal&&(k==Kind.OTHER||k==Kind.QUANTITY)){
@@ -227,13 +258,16 @@ public final class ReceiptParser {
                     if(pending.quantity!=null&&!pending.quantity.equals(d.quantity)||pending.unit!=null&&d.unit!=null&&!pending.unit.equals(d.unit)){warn(r,"隣接する単価・数量が競合しています。");pending=null;}
                     else{pending.quantity=d.quantity;if(d.unit!=null)pending.unit=d.unit;pending.raw+="\n"+s;pending.row=in.row;attached=true;}
                 }else if(active>=0&&gap==0&&ReceiptLayout.adjacent(activeRow,in.row)){
-                    Candidate old=r.items.get(active);boolean conflict=old.quantity!=null&&!old.quantity.equals(d.quantity)||old.unitPrice!=null&&d.unit!=null&&!old.unitPrice.equals(d.unit);
+                    Candidate old=r.items.get(active);
+                    if(d.unit==null&&(old.unitPrice==null||old.unitPrice*d.quantity!=old.price)||d.unit!=null&&d.quantity!=null&&d.unit*d.quantity!=old.price){warn(r,"隣接する単価×数量が行金額と一致せず、流用しませんでした。");r.lines.add(new Line(Kind.QUANTITY,s));active=-1;gap=0;continue;}
+                    boolean conflict=old.quantity!=null&&!old.quantity.equals(d.quantity)||old.unitPrice!=null&&d.unit!=null&&!old.unitPrice.equals(d.unit);
                     if(conflict)warn(r,"隣接する単価・数量が競合しています。");
-                    r.items.set(active,candidate(r,old.name,old.price,old.raw+"\n"+s,conflict?null:d.quantity,conflict?null:d.unit==null?old.unitPrice:d.unit,old.taxRate,old.markers,old.amountBasis,old.uncertainLayout||conflict));activeRow=in.row;attached=true;if(conflict)active=-1;
+                    Candidate updated=candidate(r,old.name,old.price,old.raw+"\n"+s,conflict?null:d.quantity,conflict?null:d.unit==null?old.unitPrice:d.unit,old.taxRate,old.markers,old.amountBasis,old.uncertainLayout||conflict);updated.managementCode=old.managementCode;updated.codeUncertain=old.codeUncertain;r.items.set(active,updated);activeRow=in.row;attached=true;if(conflict)active=-1;
                 }else warn(r,"結び付く商品がない単価・数量行を除外しました。");
                 r.lines.add(new Line(attached?Kind.ITEM_DETAIL:Kind.QUANTITY,s));gap=0;continue;
             }
             if(k!=Kind.OTHER){
+                waitingCode="";waitingCodeRaw="";
                 r.lines.add(new Line(k,s));pending=null;active=-1;gap=0;Long n=lastAmount(s);
                 if(exactKind(s)==Kind.OTHER)warn(r,"集計・支払見出しのOCR表記揺れを検出しました。原文を確認してください。");
                 if(k==Kind.TOTAL){
@@ -241,7 +275,7 @@ public final class ReceiptParser {
                     if(n!=null){if(r.total!=null&&!r.total.equals(n))totalConflict=true;if(!totalConflict)r.total=n;}
                     afterTotal=true;
                 }
-                if(k==Kind.SUBTOTAL){afterTotal=true;r.subtotalUncertain|=exactKind(s)==Kind.OTHER;if(n!=null){if(r.subtotal!=null&&!r.subtotal.equals(n))subtotalConflict=true;if(!subtotalConflict)r.subtotal=n;}}
+                if(k==Kind.SUBTOTAL){Matcher points=Pattern.compile("(?<![0-9])([0-9]{1,3})(?:点|個)").matcher(compact(s));if(points.find()){Integer v=count(points.group(1));if(r.printedItemCount!=null&&!r.printedItemCount.equals(v)){r.printedItemCount=null;warn(r,"購入点数が競合して未確定です。");}else if(!r.warnings.contains("購入点数が競合して未確定です。"))r.printedItemCount=v;}afterTotal=true;r.subtotalUncertain|=exactKind(s)==Kind.OTHER;if(n!=null){if(r.subtotal!=null&&!r.subtotal.equals(n))subtotalConflict=true;if(!subtotalConflict)r.subtotal=n;}}
                 if(k==Kind.COUNT_TOTAL){Matcher q=Pattern.compile("(?<![0-9])([0-9]{1,3})\\s*(?:点|個)?$").matcher(s);if(q.find()){Integer v=count(q.group(1));if(r.printedItemCount!=null&&!r.printedItemCount.equals(v)){r.printedItemCount=null;warn(r,"購入点数が競合して未確定です。");}else if(!r.warnings.contains("購入点数が競合して未確定です。"))r.printedItemCount=v;}}
                 if(k==Kind.TAX)tax(r,s);if(k==Kind.DISCOUNT)r.hasDiscount=true;continue;
             }
@@ -273,7 +307,7 @@ public final class ReceiptParser {
                 if(a.value!=null&&a.value>0&&productName(name)&&r.items.size()<80){
                     if(a.rateUncertain)warn(r,"同一明細に異なる税率があり未確定です。");
                     AmountBasis b=a.basis==AmountBasis.UNKNOWN?r.amountBasis:a.basis;
-                    r.items.add(candidate(r,name,a.value,raw,qty,unit,a.rate,a.markers,b,uncertain));r.lines.add(new Line(Kind.ITEM,raw));
+                    Candidate item=candidate(r,name,a.value,raw,qty,unit,a.rate,a.markers,b,uncertain);item.managementCode=in.code.isEmpty()?waitingCode:in.code;item.codeUncertain=in.codeUncertain||!waitingCode.isEmpty();if(!waitingCodeRaw.isEmpty())item=codedCandidate(item,waitingCodeRaw);waitingCode="";waitingCodeRaw="";r.items.add(item);r.lines.add(new Line(Kind.ITEM,raw));
                     pending=null;active=r.items.size()-1;activeRow=in.row;gap=0;continue;
                 }
             }
