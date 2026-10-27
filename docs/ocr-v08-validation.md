@@ -36,7 +36,22 @@
 
 ## 検証状態
 
-基礎回帰は326件（PriceMath7 / Parser40 / Layout60 / Unit48 / Extraction166 / Image5）が合格。ローカルAPK/テストAPKビルド、Lint（エラー0・既存警告6）、Manifest・同梱モデルSHA・ELF・署名の検証も合格。GitHub ActionsとAndroidの最終結果は完了後に追記する。
+基礎回帰は326件（PriceMath7 / Parser40 / Layout60 / Unit48 / Extraction166 / Image5）が合格。ローカルAPK/テストAPKビルド、Lint（エラー0・既存警告6）、Manifest・同梱モデルSHA・ELF・署名の検証も合格。[GitHub Actionsの最終実行](https://github.com/MM20261010/kosso-pricebook/actions/runs/40500712064)も全工程成功。Android 35 AOSP x86_64エミュレータは **327チェック合格**。
+
+Androidでは従来の架空画像8種類を両OCRに同一画素で渡す検査と、今回の同一コードによる破損OCR/座標回帰166件を実施。隔離したキャッシュDBで旧SQLite移行、新旧JSON復元、原子的保存/復元、コードなし名称・確認済み税込単価・数量・印字情報のメモ連携、管理情報を隠す合成画面描画を確認した。本人の履歴DBは開かない。画面の描画検査は実端末の操作・可読性・修正回数を保証しない。
+
+### 取得できるAPK
+
+- [APK Artifact](https://github.com/MM20261010/kosso-pricebook/actions/runs/40500712064/artifacts/12733057542) / `kosso-pricebook-debug-v0.8`。
+- 成功実行 `40500712064`、APKソース `eb07f33dce1385516984a9e7f3156f673fc05302`。以後の検証記録コミットは文書のみ。
+- 版：versionCode 8 / `0.8.0-debug-extraction`。72,608,931 bytes（69.2 MiB）、検証済みv0.7比 +16,376 bytes（約16 KiB）。
+- 有効期限：2026-11-10 21:14:35 JST。
+- APK SHA-256：`a00a8ac4773fb01422c2debefbd8d1e911676a5b8567096af6ed5f771f3cbee3`。
+- 署名証明書 SHA-256：`c8b34725e7e9a06e74caf6e13e6fbf563bb284cef38e29f2022669916efaa0d3`。
+- 取得した実APKでも版/DEX内のv0.8実装、Manifest、同梱モデル/ライセンス、ELF、署名、zipalignを再検証した。
+- [PR #5](https://github.com/MM20261010/kosso-pricebook/pull/5) はv0.7への積み重ねPR。#1〜#5は未マージ、mainは変更していない。途中の `40500282787` / `40500516401` は最終修正を含めるため取消済みで、成功判定に含めない。
+
+**導入**：v0.7の署名証明書 `550ca1e12f6433a5bf473868a30f7ab2ac6bf07ae3d10c379738d4afe5957231` と異なり、上書きできない。v0.7でJSONを端末内へ書き出してファイルを確認→GitHubログイン後に上記ZIPを取得→解凍→バックアップを確保してから旧アプリ削除→ `app-debug.apk` をインストール→JSON復元。**退避前にアンインストールしない。削除すると履歴が消える。** v0.8はv0.7のv2 JSONも旧v1 JSONも復元でき、書き出し形式/DBはv0.7と同じ。既存履歴の名前や数量は自動修正しない。
 
 - **機能**：既存の購入単価・買い物メモ・店舗別比較・履歴・JSONを維持。今回の破損データをAndroidでも実行し、コードを含まない名称と確認済み税込単価の保存/再表示、新旧JSON、既存DB移行を検証する。
 - **プライバシー**：PaddleOCR v5+ncnn FP32とTesseractを端末内実行、モデルは同梱、通信権限・外部OCR・自動収集・追跡・新規SDKなし。実レシート・識別情報・購入情報はGitHub/CIへ登録しない。管理コードとOCR原文はDB/JSONへ保存しない。
