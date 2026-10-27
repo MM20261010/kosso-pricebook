@@ -10,20 +10,20 @@ import java.util.regex.Pattern;
 /** Bounded, unconfirmed suggestions. Printed amounts are never assumed to be gross unit prices. */
 public final class ReceiptParser {
     private ReceiptParser() { }
-    public enum Kind { ITEM, ITEM_DETAIL, STORE, DATE, QUANTITY, COUNT_TOTAL, SUBTOTAL, TAX, TOTAL, DISCOUNT, PAYMENT, OTHER }
+    public enum Kind { ITEM, ITEM_DETAIL, STORE, DATE, QUANTITY, COUNT_TOTAL, SUBTOTAL, TAX, TOTAL, DISCOUNT, PAYMENT, MANAGEMENT, OTHER }
     public enum AmountBasis { UNKNOWN, EXCLUSIVE, INCLUSIVE }
     public static final class Line {
         public final Kind kind; public final String raw;
         Line(Kind k,String raw){kind=k;this.raw=raw;}
     }
     public static final class Candidate {
-        public final String name,raw,markers;
+        public final String name,raw,markers,specification;
         public final long price;
         public final Integer quantity,taxRate;
         public final Long unitPrice;
         public final AmountBasis amountBasis;
         public final boolean uncertainLayout,nameSuffixUncertain;
-        Candidate(String n,long p,String r,Integer q,Long u,Integer t,String marks,AmountBasis basis,boolean uncertain){name=n;price=p;raw=r;quantity=q;unitPrice=u;taxRate=t;markers=marks;amountBasis=basis;uncertainLayout=uncertain;nameSuffixUncertain=n.matches(".*[CVcv]$")&&marks.toUpperCase(java.util.Locale.ROOT).contains(n.substring(n.length()-1).toUpperCase(java.util.Locale.ROOT));}
+        Candidate(String n,long p,String r,Integer q,Long u,Integer t,String marks,AmountBasis basis,boolean uncertain){name=n;specification=specificationText(n);price=p;raw=r;quantity=q;unitPrice=u;taxRate=t;markers=marks;amountBasis=basis;uncertainLayout=uncertain;nameSuffixUncertain=n.matches(".*[CVcv]$")&&marks.toUpperCase(java.util.Locale.ROOT).contains(n.substring(n.length()-1).toUpperCase(java.util.Locale.ROOT));}
     }
     public static final class TaxBreakdown {
         public final int rate; public Long base,tax;
@@ -91,7 +91,11 @@ public final class ReceiptParser {
     private static final class Pending {String name,raw;Integer quantity;Long unit;ReceiptLayout.Row row;int parts=1;boolean uncertain;Pending(String name,ReceiptLayout.Row row){this.name=name;raw=name;this.row=row;}}
     private static final class Detail {Integer quantity;Long unit;}
     private static final class Amount {String name,markers;Long value;Integer rate;AmountBasis basis;boolean rateUncertain;}
-    private static String compact(String s){return s.replaceAll("\\s+","");}
+    static String specificationText(String name){
+        Matcher m=Pattern.compile("(?i)(?<![0-9])([0-9]+(?:[.][0-9]+)?\\s*(?:kg|g|ml|l|枚入|個入|本入|袋入|枚|パック))(?![A-Za-z])").matcher(name);
+        return m.find()?m.group(1):"";
+    }
+    private static String compact(String s){return s.replaceAll("\\s+","").replace('稅','税');}
     private static String normal(String s){return Normalizer.normalize(s,Normalizer.Form.NFKC).replace('￥','¥').replace('−','-').replace('△','-').replaceAll("\\s+"," ").trim();}
     private static Long money(String s){try{long n=Long.parseLong(s.replace(",",""));return n>=0&&n<=1_000_000?n:null;}catch(Exception e){return null;}}
     private static Integer count(String s){try{int n=Integer.parseInt(s);return n>=1&&n<=999?n:null;}catch(Exception e){return null;}}
@@ -112,6 +116,7 @@ public final class ReceiptParser {
     }
     private static Kind exactKind(String s){
         String t=compact(s);
+        if(t.matches("(?i)^(?:取引(?:番号|No)?|レジ(?:番号|No)?|担当(?:者)?(?:番号|No)?|責任者|店(?:舗)?(?:番号|番|No)|店舗コード|商品コード|JAN(?:コード)?|SKU|伝票(?:番号)?|レシート番号|登録番号|会員番号|STORE(?:NO|NUMBER|CODE|ID)|REG(?:ISTER)?(?:NO|NUMBER|ID|[0-9:#.])|POS(?:NO|NUMBER|ID|[0-9:#.])|SHOP(?:NO|NUMBER|CODE|ID)).*"))return Kind.MANAGEMENT;
         if(t.matches(".*(?:値引|值引|割引|クーポン|返品|返金|ポイント利用).*"))return Kind.DISCOUNT;
         if(t.matches("^(?:購入点数|商品点数|お買上げ?点数|お買い上げ点数|買上点数|合計点数|点数|数量合計|購入数).*"))return Kind.COUNT_TOTAL;
         if(t.matches("^(?:数量|個数).*"))return Kind.QUANTITY;
@@ -154,6 +159,7 @@ public final class ReceiptParser {
         return c;
     }
     private static void tax(Receipt r,String s){
+        s=s.replace('稅','税');
         Matcher rate=RATE.matcher(s);Long n=lastAmount(s);
         if(rate.find()){
             int pct=Integer.parseInt(rate.group(1));TaxBreakdown band=null;for(TaxBreakdown b:r.taxBreakdowns)if(b.rate==pct)band=b;
@@ -178,7 +184,7 @@ public final class ReceiptParser {
         List<Input> input=new ArrayList<>();for(String s:lines)input.add(new Input(s,null));return parseInputs(input,0);
     }
     public static Receipt parseDocument(OcrDocument doc){
-        if(doc==null)return new Receipt();List<Input> input=new ArrayList<>();for(ReceiptLayout.Row row:ReceiptLayout.rows(doc))input.add(new Input(row.text,row));return parseInputs(input,doc.width);
+        if(doc==null)return new Receipt();List<Input> input=new ArrayList<>();List<ReceiptLayout.Row> rows=ReceiptLayout.rows(doc);for(ReceiptLayout.Row row:rows)input.add(new Input(ReceiptLayout.productText(row,rows),row));return parseInputs(input,doc.width);
     }
     private static Receipt parseInputs(List<Input> input,int imageWidth){
         Receipt r=new Receipt();boolean net=false,gross=false;int dateIndex=-1;
@@ -192,6 +198,7 @@ public final class ReceiptParser {
         boolean afterTotal=false,dateConflict=false,storeConflict=false,totalConflict=false,subtotalConflict=false;
         for(int index=0;index<input.size();index++){
             Input in=input.get(index);String source=in.text;
+            if(in.row!=null&&!source.equals(in.row.text))r.lines.add(new Line(Kind.MANAGEMENT,in.row.text));
             if(source.length()>240){pending=null;active=-1;warn(r,"長すぎる行を除外しました。");continue;}
             String s=normal(source);if(s.isEmpty()){if(++gap>2){pending=null;active=-1;}continue;}
             if(in.row!=null&&in.row.uncertain){pending=null;active=-1;r.lines.add(new Line(Kind.OTHER,s));warn(r,"重なり・行位置が曖昧な領域は商品へ結合しませんでした。");continue;}
@@ -234,7 +241,7 @@ public final class ReceiptParser {
                     if(n!=null){if(r.total!=null&&!r.total.equals(n))totalConflict=true;if(!totalConflict)r.total=n;}
                     afterTotal=true;
                 }
-                if(k==Kind.SUBTOTAL){r.subtotalUncertain|=exactKind(s)==Kind.OTHER;if(n!=null){if(r.subtotal!=null&&!r.subtotal.equals(n))subtotalConflict=true;if(!subtotalConflict)r.subtotal=n;}}
+                if(k==Kind.SUBTOTAL){afterTotal=true;r.subtotalUncertain|=exactKind(s)==Kind.OTHER;if(n!=null){if(r.subtotal!=null&&!r.subtotal.equals(n))subtotalConflict=true;if(!subtotalConflict)r.subtotal=n;}}
                 if(k==Kind.COUNT_TOTAL){Matcher q=Pattern.compile("(?<![0-9])([0-9]{1,3})\\s*(?:点|個)?$").matcher(s);if(q.find()){Integer v=count(q.group(1));if(r.printedItemCount!=null&&!r.printedItemCount.equals(v)){r.printedItemCount=null;warn(r,"購入点数が競合して未確定です。");}else if(!r.warnings.contains("購入点数が競合して未確定です。"))r.printedItemCount=v;}}
                 if(k==Kind.TAX)tax(r,s);if(k==Kind.DISCOUNT)r.hasDiscount=true;continue;
             }
@@ -242,7 +249,7 @@ public final class ReceiptParser {
             if(s.matches(".*\\s-\\s*[¥]?"+MONEY+".*")){pending=null;active=-1;r.hasDiscount=true;r.lines.add(new Line(Kind.DISCOUNT,s));warn(r,"負の金額らしい行を除外しました。値引等の配分は未確定です。");continue;}
             Amount a=amount(s);
             if(a!=null){
-                String name=a.name;Integer qty=null;Long unit=null;String raw=s;boolean uncertain=false;
+                String name=a.name;Integer qty=null;Long unit=null;String raw=in.row==null?s:in.row.text;boolean uncertain=false;
                 Matcher u=UNIT.matcher(name);
                 if(u.find()){unit=money(u.group(1));qty=count(u.group(2));name=(name.substring(0,u.start())+name.substring(u.end())).trim();}
                 Detail prefix=detail(name);if(prefix!=null){qty=prefix.quantity;unit=prefix.unit;name="";}

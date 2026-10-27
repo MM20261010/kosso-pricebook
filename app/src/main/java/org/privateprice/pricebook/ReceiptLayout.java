@@ -18,7 +18,7 @@ final class ReceiptLayout {
             parts.add(p);
         }
     }
-    private static final class Part {
+    static final class Part {
         String text;double left=Double.POSITIVE_INFINITY,right=Double.NEGATIVE_INFINITY,top=Double.POSITIVE_INFINITY,bottom=Double.NEGATIVE_INFINITY;
         double height(){return bottom-top;}
         double center(){return (top+bottom)/2;}
@@ -59,6 +59,29 @@ final class ReceiptLayout {
             if(row.parts.stream().filter(p->p.text.matches(".*[\\p{L}].*\\s+[¥]?[0-9][0-9,]*\\s*[CVcv*※軽外内非]*$")).count()>1)row.uncertain=true;
         }
         return rows;
+    }
+    /** Remove only a separate long numeric region left of a name and a separate right amount.
+     * Embedded model numbers/capacities, and uncertain arrangements, remain untouched. */
+    static String productText(Row row,List<Row> rows){
+        if(row.uncertain||row.parts.size()<3)return row.text;
+        Part last=row.parts.get(row.parts.size()-1);
+        if(!last.text.matches("[¥]?[0-9][0-9,]*円?\\s*[CVcv*※軽外内非]*"))return row.text;
+        StringBuilder out=new StringBuilder();
+        for(int i=0;i<row.parts.size();i++){
+            Part p=row.parts.get(i);
+            boolean code=hasCodeHeading(p,rows)&&p.text.matches("[0-9]{5,18}")&&i+1<row.parts.size()-1
+                &&row.parts.get(i+1).text.matches(".*[\\p{L}].*")
+                &&p.right<row.parts.get(i+1).left&&last.left>row.parts.get(i+1).right;
+            if(!code){if(out.length()>0)out.append(' ');out.append(p.text);}
+        }
+        return out.toString();
+    }
+    private static boolean hasCodeHeading(Part part,List<Row> rows){
+        for(Row header:rows)for(Part p:header.parts){
+            if(header.uncertain||p.bottom>=part.top||!p.text.replaceAll("\\s+","").matches("(?i)(?:商品コード|JAN(?:コード)?|SKU)"))continue;
+            if(Math.abs((p.left+p.right-part.left-part.right)/2)<=Math.max(part.height()*2,(p.right-p.left)/2))return true;
+        }
+        return false;
     }
     static boolean adjacent(Row before,Row after){
         if(before==null||after==null)return true; // text-only fallback uses its own line-gap limit
