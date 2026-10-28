@@ -181,6 +181,9 @@ public final class ReceiptParser {
     private static int adminSignals(String s){
         String t=compact(s).toUpperCase(java.util.Locale.ROOT);int n=0;
         if(t.matches(".*(?:店(?:舗|鋪)?(?:番|NO|N0)|STORE|SHOP).*"))n++;
+        // Broken header labels may leave a short "店:012" prefix before other administrative IDs.
+        // This is a separate, structured store cue; a plain product "レジ袋" is not enough.
+        if(t.matches("^(?:店|店舗)[:：#][0-9OIL|]{2,}.*"))n++;
         if(t.matches(".*(?:レ[ジシ]|REG|POS).*"))n++;
         if(t.matches(".*(?:担.{0,2}|STAFF).*"))n++;
         if(t.matches(".*取.{0,2}(?:NO|N0|番号).*"))n++;
@@ -224,13 +227,25 @@ public final class ReceiptParser {
         Matcher m=Pattern.compile("(?<![0-9])([0-9]{1,3})(?:点|奌|占|卓)(?![\\p{L}0-9])").matcher(compact(s));
         return m.find()?count(m.group(1)):null;
     }
+    private static boolean strongSubtotalHeading(String heading){
+        // Without a visible tax/total footer only hold an exceptionally compact subtotal-like label.
+        // Do not hide products like "小豆8点" or "小計8点セット".
+        return compact(heading).matches("^小(?:計|訐|討|汁|什|十|鈄|言十)[0-9]{1,3}(?:点|奌|占|卓)$");
+    }
     private static boolean structuralSubtotal(List<Input> input,int index,Receipt r,int width){
-        if(r.items.size()<2||!futureSummary(input,index))return false;
+        if(r.items.size()<2)return false;
         Input in=input.get(index);Amount a=amount(normal(in.text));if(a==null||a.value==null)return false;
         String heading=compact(a.name);Integer points=summaryCount(heading);
         if(!heading.startsWith("小")||heading.length()>12||points==null)return false;
+        boolean hasFooter=futureSummary(input,index);
+        if(!hasFooter&&!strongSubtotalHeading(heading))return false;
         in.structuralCount=points;in.structural=true;
         if(!amountColumn(input,index,width)){in.holdBoundary=true;in.reason=in.row==null?"SUMMARY_LIKE_NO_POSITION_HELD":"SUMMARY_LIKE_COLUMN_MISMATCH_HELD";return false;}
+        if(!hasFooter){
+            // Retain this as an unconfirmed summary-like boundary without inventing an amount.
+            // No visible footer: even a matching item sum alone cannot prove a subtotal.
+            in.holdBoundary=true;in.reason="SUMMARY_LIKE_NO_FOOTER_HELD";return false;
+        }
         if(a.value==r.itemSum()){in.reason="SUBTOTAL_COLUMN_COUNT_SUM_FOOTER";return true;}
         in.holdBoundary=true;in.reason="SUMMARY_LIKE_AMOUNT_MISMATCH_HELD";return false;
     }

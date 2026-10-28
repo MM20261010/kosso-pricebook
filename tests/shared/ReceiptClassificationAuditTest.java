@@ -54,6 +54,45 @@ public final class ReceiptClassificationAuditTest {
         List<OcrDocument.Region> footerDate=new ArrayList<>();String[] goods={"架空牛乳","架空パン","レジ袋"};for(int i=0;i<3;i++){footerDate.add(ReceiptAuditScenario.box(goods[i],70,30+i*50,400));footerDate.add(ReceiptAuditScenario.box("200",850,34+i*50,140));}footerDate.add(ReceiptAuditScenario.box("2026/10/27",70,220,400));
         r=ReceiptParser.parseDocument(new OcrDocument("fictional footer date",1200,1600,footerDate));check(r.items.size()==3,"a footer date does not quarantine an established product block");
         r=ReceiptParser.parseReceipt(ReceiptAuditScenario.text(4));check(r.items.size()==6&&r.analysisMode.equals("TEXT")&&r.subtotal==null&&r.decisions.stream().anyMatch(d->d.reason.equals("SUMMARY_LIKE_NO_POSITION_HELD")),"same content after geometry loss is held instead of a summary item");
+        // Independent fictional follow-up to the user's 8-candidate device diagnosis.
+        // Date precedes a damaged two-cue administrative row; taxes/footers are missing after the subtotal.
+        List<OcrDocument.Region> orphan=new ArrayList<>();
+        for(OcrDocument.Region part:ReceiptExtractionTest.fixture(0).regions){
+            if(part.text.contains("架空受付")){
+                orphan.add(ReceiptAuditScenario.box("店:012V:34取引N0:",30,part.y(0),700));
+                orphan.add(ReceiptAuditScenario.box("98765",850,part.y(0)+4,140));
+            }else if(part.text.startsWith("小汁")){
+                orphan.add(ReceiptAuditScenario.box("小鈄8占",70,part.y(0),300));
+                orphan.add(ReceiptAuditScenario.box("2872",850,part.y(0)+4,140));
+            }else if(part.text.contains("消費税")||part.text.contains("税額合計")
+                    ||part.text.startsWith("合計")||part.text.contains("支払案内")||part.text.contains("カード支払")){
+                continue;
+            }else orphan.add(part);
+        }
+        ReceiptParser.Receipt deviceLike=ReceiptParser.parseDocument(new OcrDocument("fictional broken-footer case",1200,1600,orphan));
+        check(deviceLike.analysisMode.equals("POSITIONED")&&deviceLike.items.size()==6&&deviceLike.itemSum()==2872,
+                "after-date damaged admin and missing-footer subtotal do not become products");
+        check(deviceLike.decisions.stream().anyMatch(x->x.raw.contains("店:012")
+                &&(x.kind==ReceiptParser.Kind.MANAGEMENT||x.kind==ReceiptParser.Kind.HELD)
+                &&x.candidates.isEmpty()),
+                "broken after-date administration row is excluded, regardless of which valid exclusion reason applies");
+        check(deviceLike.decisions.stream().anyMatch(x->x.reason.equals("SUMMARY_LIKE_NO_FOOTER_HELD")&&x.candidates.isEmpty()),
+                "strong compact subtotal with aligned amount is held even without footer");
+        check(deviceLike.subtotal==null,"without footer, guessed subtotal amount must remain unset");
+        check(deviceLike.items.stream().anyMatch(x->x.price==158&&Integer.valueOf(2).equals(x.quantity)&&Long.valueOf(79).equals(x.unitPrice))
+                &&deviceLike.items.stream().anyMatch(x->x.price==490&&Integer.valueOf(2).equals(x.quantity)&&Long.valueOf(245).equals(x.unitPrice)),
+                "legitimate 79x2 and 245x2 are unchanged");
+        List<OcrDocument.Region> safeProducts=Arrays.asList(
+                ReceiptAuditScenario.box("2026/10/27",70,30,400),
+                ReceiptAuditScenario.box("レジ袋",70,100,380),ReceiptAuditScenario.box("100",850,104,140),
+                ReceiptAuditScenario.box("架空麦",70,170,380),ReceiptAuditScenario.box("200",850,174,140),
+                ReceiptAuditScenario.box("小豆8点",70,240,380),ReceiptAuditScenario.box("399",850,244,140),
+                ReceiptAuditScenario.box("小計8点セット",70,310,380),ReceiptAuditScenario.box("499",850,314,140));
+        ReceiptParser.Receipt safe=ReceiptParser.parseDocument(new OcrDocument("fictional real products",1200,1000,safeProducts));
+        check(safe.items.size()==4&&safe.items.stream().anyMatch(x->x.name.equals("レジ袋"))
+                &&safe.items.stream().anyMatch(x->x.name.equals("小豆8点"))
+                &&safe.items.stream().anyMatch(x->x.name.equals("小計8点セット")),
+                "legitimate first product and small/count-labelled products remain items");
         check(ReceiptParser.visibleText("取\u200b引").equals("取〈U+200B〉引"),"local text display makes invisible formatting explicit");
         System.out.println("PASS ReceiptClassificationAudit "+checks+" targeted checks");return checks;
     }
