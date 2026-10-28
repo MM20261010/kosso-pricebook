@@ -42,6 +42,16 @@ public final class ReceiptParser {
             this.candidates=java.util.Collections.unmodifiableList(new ArrayList<>(candidates));
         }
     }
+
+    /** Only decisions linked to the selected one-based candidate, never a text-based guess. */
+    public static List<Decision> decisionsForCandidate(Receipt receipt,int candidateNumber){
+        if(receipt==null||candidateNumber<1||candidateNumber>receipt.items.size())
+            return java.util.Collections.emptyList();
+        List<Decision> rows=new ArrayList<>();
+        for(Decision decision:receipt.decisions)
+            if(decision.candidates.contains(candidateNumber))rows.add(decision);
+        return java.util.Collections.unmodifiableList(rows);
+    }
     public static final class Receipt {
         public final List<Candidate> items=new ArrayList<>();
         public final List<Line> lines=new ArrayList<>();

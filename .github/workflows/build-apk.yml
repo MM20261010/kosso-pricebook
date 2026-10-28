@@ -52,7 +52,7 @@ jobs:
       - name: Upload test APK
         uses: actions/upload-artifact@v4
         with:
-          name: kosso-pricebook-debug-v0.8.1
+          name: kosso-pricebook-debug-v0.8.2
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
@@ -60,7 +60,7 @@ jobs:
       - name: Upload synthetic instrumentation APK
         uses: actions/upload-artifact@v4
         with:
-          name: kosso-pricebook-v0.8.1-synthetic-tests
+          name: kosso-pricebook-v0.8.2-synthetic-tests
           path: app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
           if-no-files-found: error
           retention-days: 14
@@ -81,11 +81,11 @@ jobs:
         run: sdkmanager 'build-tools;35.0.0' 'emulator' 'system-images;android-35;default;x86_64'
       - uses: actions/download-artifact@v4
         with:
-          name: kosso-pricebook-debug-v0.8.1
+          name: kosso-pricebook-debug-v0.8.2
           path: apk
       - uses: actions/download-artifact@v4
         with:
-          name: kosso-pricebook-v0.8.1-synthetic-tests
+          name: kosso-pricebook-v0.8.2-synthetic-tests
           path: test-apk
       - name: Download pinned v0.8 APK for DEX comparison
         if: inputs.compare_v08_apk
