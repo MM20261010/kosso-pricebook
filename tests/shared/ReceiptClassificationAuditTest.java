@@ -72,8 +72,10 @@ public final class ReceiptClassificationAuditTest {
         ReceiptParser.Receipt deviceLike=ReceiptParser.parseDocument(new OcrDocument("fictional broken-footer case",1200,1600,orphan));
         check(deviceLike.analysisMode.equals("POSITIONED")&&deviceLike.items.size()==6&&deviceLike.itemSum()==2872,
                 "after-date damaged admin and missing-footer subtotal do not become products");
-        check(deviceLike.decisions.stream().anyMatch(x->x.reason.equals("MULTIPLE_ADMIN_SIGNALS_HELD")&&x.candidates.isEmpty()),
-                "two independently detected admin cues exclude an after-date number");
+        check(deviceLike.decisions.stream().anyMatch(x->x.raw.contains("店:012")
+                &&(x.kind==ReceiptParser.Kind.MANAGEMENT||x.kind==ReceiptParser.Kind.HELD)
+                &&x.candidates.isEmpty()),
+                "broken after-date administration row is excluded, regardless of which valid exclusion reason applies");
         check(deviceLike.decisions.stream().anyMatch(x->x.reason.equals("SUMMARY_LIKE_NO_FOOTER_HELD")&&x.candidates.isEmpty()),
                 "strong compact subtotal with aligned amount is held even without footer");
         check(deviceLike.subtotal==null,"without footer, guessed subtotal amount must remain unset");
