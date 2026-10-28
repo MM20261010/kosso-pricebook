@@ -327,20 +327,35 @@ public final class MainActivity extends Activity {
         details.addView(button("OCR結果を破棄",()->new AlertDialog.Builder(this).setMessage("確認中の明細を破棄しますか？").setNegativeButton("戻る",null).setPositiveButton("破棄",(d,w)->{reviewText="";reviewDocument=null;reviewModel=null;render();}).show()));
     }
     private String buildIdentity(){return "v"+BuildConfig.VERSION_NAME+" / versionCode "+BuildConfig.VERSION_CODE+"\nソース "+BuildConfig.SOURCE_COMMIT+(BuildConfig.SOURCE_DIRTY?"（未コミット変更あり）":"（コミット済みソース）")+"\n解析 "+BuildConfig.PARSER_REVISION;}
+    /** Private, opt-in raw text remains hidden until the user expands its own row. */
+    private void appendDecisionAudit(LinearLayout target,ReceiptParser.Decision decision){
+        target.addView(text("行"+decision.row+" / 領域["+decision.regions+"] / "+decision.kind+"\n理由 "+decision.reason+" / 候補番号 "+decision.candidates,13,true,INK));
+        target.addView(text("判定信号（原文・番号・金額は含みません）：\n"+decision.evidence,12,false,MUTED));
+        if(Double.isFinite(decision.left))
+            target.addView(text(String.format(Locale.ROOT,"位置 %.0f,%.0f → %.0f,%.0f",decision.left,decision.top,decision.right,decision.bottom),12,false,MUTED));
+        LinearLayout privateText=disclosure("原文と正規化を端末内で照合",target);
+        privateText.addView(text("原文："+ReceiptParser.visibleText(decision.raw)+"\n正規化："+ReceiptParser.visibleText(decision.normalized),13,false,MUTED));
+    }
     private void showClassificationAudit(ReceiptParser.Receipt receipt){
         if(!BuildConfig.DEBUG)return;
         LinearLayout body=col();body.setPadding(dp(16),dp(8),dp(16),dp(20));ScrollView scroll=new ScrollView(this);scroll.addView(body);
         body.addView(text(buildIdentity(),13,true,INK));
-        body.addView(text("解析経路："+receipt.analysisMode+" / 元の操作："+reviewOrigin+"\n候補 "+receipt.items.size()+"件 / 入力行 "+receipt.decisions.size()+"件\nPOSITIONEDは検出座標あり、TEXTは座標なしです。以下は端末内表示のみで、保存・ログ・送信は行いません。原文や管理番号を共有しないでください。",13,false,MUTED));
-        for(ReceiptParser.Decision decision:receipt.decisions){
-            body.addView(text("行"+decision.row+" / 領域["+decision.regions+"] / "+decision.kind+"\n理由 "+decision.reason+" / 候補番号 "+decision.candidates,13,true,INK));
-            body.addView(text("判定信号（原文・番号・金額は含みません）：\n"+decision.evidence,12,false,MUTED));
-            if(Double.isFinite(decision.left))body.addView(text(String.format(Locale.ROOT,"位置 %.0f,%.0f → %.0f,%.0f",decision.left,decision.top,decision.right,decision.bottom),12,false,MUTED));
-            LinearLayout privateText=disclosure("原文と正規化を端末内で照合",body);
-            privateText.addView(text("原文："+ReceiptParser.visibleText(decision.raw)+"\n正規化："+ReceiptParser.visibleText(decision.normalized),13,false,MUTED));
+        body.addView(text("解析経路："+receipt.analysisMode+" / 元の操作："+reviewOrigin+"\n候補 "+receipt.items.size()+"件 / 入力行 "+receipt.decisions.size()+"件\nPOSITIONEDは検出座標あり、TEXTは座標なしです。診断は端末内表示のみで、保存・ログ・送信は行いません。原文や管理番号を共有しないでください。",13,false,MUTED));
+        body.addView(text("商品候補の番号から採用理由を確認できます。レシート全領域を探す必要はありません。番号は確認・修正画面の商品候補の表示順です。",14,true,INK));
+        for(int number=1;number<=receipt.items.size();number++){
+            List<ReceiptParser.Decision> related=ReceiptParser.decisionsForCandidate(receipt,number);
+            String adoption="採用理由の対応行なし";
+            for(ReceiptParser.Decision decision:related)
+                if(decision.kind==ReceiptParser.Kind.ITEM){adoption=decision.reason;break;}
+            LinearLayout focus=disclosure("候補番号 ["+number+"] / "+adoption+" / 関連行 "+related.size(),body);
+            if(related.isEmpty())focus.addView(text("候補と分類行の対応を追跡できませんでした。推測で補完しません。",12,false,MUTED));
+            for(ReceiptParser.Decision decision:related)appendDecisionAudit(focus,decision);
         }
+        LinearLayout all=disclosure("すべての領域の分類理由（詳細調査用）",body);
+        for(ReceiptParser.Decision decision:receipt.decisions)appendDecisionAudit(all,decision);
         AlertDialog dialog=new AlertDialog.Builder(this).setTitle("分類理由・調査用").setView(scroll).setPositiveButton("閉じる",null).create();
-        if(dialog.getWindow()!=null)dialog.getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);dialog.show();
+        if(dialog.getWindow()!=null)dialog.getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);
+        dialog.show();
     }
     private void watch(EditText edit,Runnable change){
         edit.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence s,int start,int count,int after){}public void onTextChanged(CharSequence s,int start,int before,int count){change.run();}public void afterTextChanged(android.text.Editable s){}});
