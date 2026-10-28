@@ -52,6 +52,48 @@ public final class ReceiptParser {
             if(decision.candidates.contains(candidateNumber))rows.add(decision);
         return java.util.Collections.unmodifiableList(rows);
     }
+
+    // Only the fixed schema below can reach Android's user-invoked clipboard.
+    // Do not copy raw OCR, product names, receipt/region IDs, amounts, coordinates, dates, or free-form evidence.
+    private static final String[] AUDIT_COPY_FIELDS = {
+        "dateAnchor", "headerAnchor", "aboveDate", "adminSignals", "identifierShape",
+        "smallHeading", "countHint", "amountColumn", "sumMatches", "futureSummary",
+        "itemsBefore", "labelKind"
+    };
+    private static boolean safeAuditValue(String key,String value){
+        if(key.equals("dateAnchor"))return value.equals("none")||value.matches("[0-9]{1,3}");
+        if(key.equals("adminSignals")||key.equals("itemsBefore"))return value.matches("[0-9]{1,3}");
+        if(key.equals("labelKind")){
+            for(Kind kind:Kind.values())if(kind.name().equals(value))return true;
+            return false;
+        }
+        return value.equals("true")||value.equals("false");
+    }
+    /** Sanitized, candidate-scoped only. Intended for explicit clipboard copy, never automatic sharing. */
+    public static String anonymizedCandidateAudit(Receipt receipt,int candidateNumber){
+        if(receipt==null||candidateNumber<1||candidateNumber>receipt.items.size())return "";
+        StringBuilder report=new StringBuilder("OCR分類診断（匿名）\n");
+        report.append("mode=").append("POSITIONED".equals(receipt.analysisMode)?"POSITIONED":"TEXT").append('\n');
+        report.append("candidate=").append(candidateNumber).append('\n');
+        List<Decision> related=decisionsForCandidate(receipt,candidateNumber);
+        report.append("linkedRows=").append(related.size()).append('\n');
+        for(Decision decision:related){
+            report.append("row=").append(decision.row).append("; kind=").append(decision.kind.name()).append('\n');
+            report.append("reason=").append(decision.reason.matches("[A-Z][A-Z0-9_]{0,63}")?decision.reason:"UNAVAILABLE").append('\n');
+            String[] pieces=decision.evidence.split(";");
+            for(String key:AUDIT_COPY_FIELDS){
+                for(String piece:pieces){
+                    String[] pair=piece.trim().split("=",2);
+                    if(pair.length==2&&pair[0].equals(key)&&safeAuditValue(key,pair[1].trim())){
+                        report.append(key).append('=').append(pair[1].trim()).append('\n');
+                        break;
+                    }
+                }
+            }
+        }
+        return report.toString();
+    }
+
     public static final class Receipt {
         public final List<Candidate> items=new ArrayList<>();
         public final List<Line> lines=new ArrayList<>();
