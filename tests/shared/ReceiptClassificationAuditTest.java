@@ -93,6 +93,40 @@ public final class ReceiptClassificationAuditTest {
                 &&safe.items.stream().anyMatch(x->x.name.equals("小豆8点"))
                 &&safe.items.stream().anyMatch(x->x.name.equals("小計8点セット")),
                 "legitimate first product and small/count-labelled products remain items");
+        // Bounded lookahead: a far-off tax/total pair must not be lost after >5 OCR rows.
+        // Only synthetic labels; original user receipt text is neither known nor used.
+        OcrDocument src=ReceiptExtractionTest.fixture(0);
+        float subtotalY=0;for(OcrDocument.Region p:src.regions)
+            if(p.text.startsWith("小汁"))subtotalY=p.y(0);
+        List<OcrDocument.Region> late=new ArrayList<>();
+        for(OcrDocument.Region p:src.regions){
+            if(p.text.startsWith("小汁")){
+                late.add(ReceiptAuditScenario.box("小鈄8占: 2872",70,p.y(0),900));
+            }else if(p.y(0)>subtotalY){
+                float[] moved=new float[8];
+                for(int n=0;n<4;n++){moved[2*n]=p.x(n);moved[2*n+1]=p.y(n)+6*44;}
+                late.add(new OcrDocument.Region(p.text,moved));
+            }else late.add(p);
+        }
+        for(int n=1;n<=6;n++)late.add(ReceiptAuditScenario.box("架空の補助行",70,subtotalY+n*44,330));
+        ReceiptParser.Receipt distant=ReceiptParser.parseDocument(new OcrDocument("synthetic distant fiscal footer",1200,1800,late));
+        check(distant.items.size()==6&&distant.itemSum()==2872&&Long.valueOf(2872).equals(distant.subtotal),
+                "subtotal with punctuation OCR artifact and fiscal footer more than five rows later");
+        check(distant.decisions.stream().anyMatch(x->x.kind==ReceiptParser.Kind.SUBTOTAL&&x.candidates.isEmpty()),
+                "distant genuine tax/total footer supports a separated summary");
+        check(distant.items.stream().anyMatch(x->x.price==158&&Integer.valueOf(2).equals(x.quantity)&&Long.valueOf(79).equals(x.unitPrice))
+                &&distant.items.stream().anyMatch(x->x.price==490&&Integer.valueOf(2).equals(x.quantity)&&Long.valueOf(245).equals(x.unitPrice)),
+                "distant footer does not change known paired quantities");
+        List<OcrDocument.Region> genuine=Arrays.asList(
+                ReceiptAuditScenario.box("2026/10/27",70,30,400),
+                ReceiptAuditScenario.box("架空牛乳",70,100,380),ReceiptAuditScenario.box("100",850,104,140),
+                ReceiptAuditScenario.box("架空パン",70,170,380),ReceiptAuditScenario.box("200",850,174,140),
+                ReceiptAuditScenario.box("小豆8点",70,240,380),ReceiptAuditScenario.box("300",850,244,140),
+                ReceiptAuditScenario.box("税額",70,310,200),ReceiptAuditScenario.box("10",850,314,140),
+                ReceiptAuditScenario.box("合計610",70,375,900));
+        ReceiptParser.Receipt inverse=ReceiptParser.parseDocument(new OcrDocument("synthetic product with coincidental sum",1200,1000,genuine));
+        check(inverse.items.size()==3&&inverse.items.get(2).name.equals("小豆8点"),
+                "genuine small-name product retained even when price equals prior-item sum near footer");
         check(ReceiptParser.visibleText("取\u200b引").equals("取〈U+200B〉引"),"local text display makes invisible formatting explicit");
         System.out.println("PASS ReceiptClassificationAudit "+checks+" targeted checks");return checks;
     }

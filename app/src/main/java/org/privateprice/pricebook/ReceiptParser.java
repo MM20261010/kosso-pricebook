@@ -210,9 +210,14 @@ public final class ReceiptParser {
         return amounts<=2;
     }
     private static boolean futureSummary(List<Input> input,int index){
-        boolean tax=false,total=false,payment=false;
-        for(int i=index+1;i<Math.min(input.size(),index+6);i++){
-            Kind k=kind(normal(input.get(i).text));tax|=k==Kind.TAX;total|=k==Kind.TOTAL;payment|=k==Kind.PAYMENT;
+        // A fiscal footer can be more than five OCR rows away due to tax breakdowns.
+        // Limit the search and stop across two clear intervening product-like rows.
+        boolean tax=false,total=false,payment=false;int products=0;
+        for(int i=index+1;i<Math.min(input.size(),index+13);i++){
+            String s=normal(input.get(i).text);Kind k=kind(s);
+            tax|=k==Kind.TAX;total|=k==Kind.TOTAL;payment|=k==Kind.PAYMENT;
+            Amount a=amount(s);
+            if(k==Kind.OTHER&&a!=null&&a.value!=null&&productName(a.name)&&++products>=2)return false;
         }
         return total&&(tax||payment);
     }
@@ -232,6 +237,11 @@ public final class ReceiptParser {
         // Do not hide products like "小豆8点" or "小計8点セット".
         return compact(heading).matches("^小(?:計|訐|討|汁|什|十|鈄|言十)[0-9]{1,3}(?:点|奌|占|卓)$");
     }
+    private static boolean plausibleSubtotalHeading(String heading){
+        // No general one-edit matching here: 小豆8点 is a plausible real product.
+        // Allow a single punctuation artifact after a known subtotal-like short label.
+        return compact(heading).matches("^小(?:計|訐|討|汁|什|十|鈄|言十)[0-9]{1,3}(?:点|奌|占|卓)[：:.]?$");
+    }
     private static boolean structuralSubtotal(List<Input> input,int index,Receipt r,int width){
         if(r.items.size()<2)return false;
         Input in=input.get(index);Amount a=amount(normal(in.text));if(a==null||a.value==null)return false;
@@ -239,6 +249,7 @@ public final class ReceiptParser {
         if(!heading.startsWith("小")||heading.length()>12||points==null)return false;
         boolean hasFooter=futureSummary(input,index);
         if(!hasFooter&&!strongSubtotalHeading(heading))return false;
+        if(hasFooter&&!plausibleSubtotalHeading(heading))return false;
         in.structuralCount=points;in.structural=true;
         if(!amountColumn(input,index,width)){in.holdBoundary=true;in.reason=in.row==null?"SUMMARY_LIKE_NO_POSITION_HELD":"SUMMARY_LIKE_COLUMN_MISMATCH_HELD";return false;}
         if(!hasFooter){
