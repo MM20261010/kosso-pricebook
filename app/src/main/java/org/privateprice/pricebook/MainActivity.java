@@ -336,18 +336,34 @@ public final class MainActivity extends Activity {
         LinearLayout privateText=disclosure("原文と正規化を端末内で照合",target);
         privateText.addView(text("原文："+ReceiptParser.visibleText(decision.raw)+"\n正規化："+ReceiptParser.visibleText(decision.normalized),13,false,MUTED));
     }
+    private void copyAnonymousCandidateAudit(ReceiptParser.Receipt receipt,int number){
+        String report=ReceiptParser.anonymizedCandidateAudit(receipt,number);
+        if(report.isEmpty()){toast("この候補の診断情報がありません");return;}
+        android.content.ClipboardManager clipboard=(android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
+        if(clipboard==null){toast("クリップボードが利用できません");return;}
+        ClipData clip=ClipData.newPlainText("匿名OCR分類診断",report);
+        if(Build.VERSION.SDK_INT>=33){
+            android.os.PersistableBundle extras=new android.os.PersistableBundle();
+            extras.putBoolean(android.content.ClipDescription.EXTRA_IS_SENSITIVE,true);
+            clip.getDescription().setExtras(extras);
+        }
+        clipboard.setPrimaryClip(clip);
+        toast("候補 ["+number+"] の匿名診断をコピーしました");
+    }
     private void showClassificationAudit(ReceiptParser.Receipt receipt){
         if(!BuildConfig.DEBUG)return;
         LinearLayout body=col();body.setPadding(dp(16),dp(8),dp(16),dp(20));ScrollView scroll=new ScrollView(this);scroll.addView(body);
         body.addView(text(buildIdentity(),13,true,INK));
         body.addView(text("解析経路："+receipt.analysisMode+" / 元の操作："+reviewOrigin+"\n候補 "+receipt.items.size()+"件 / 入力行 "+receipt.decisions.size()+"件\nPOSITIONEDは検出座標あり、TEXTは座標なしです。診断は端末内表示のみで、保存・ログ・送信は行いません。原文や管理番号を共有しないでください。",13,false,MUTED));
-        body.addView(text("商品候補の番号から採用理由を確認できます。レシート全領域を探す必要はありません。番号は確認・修正画面の商品候補の表示順です。",14,true,INK));
+        body.addView(text("商品候補の番号から採用理由を確認できます。番号は商品候補の表示順です。匿名診断のコピーは明示操作のみ。Androidのクリップボードには他アプリからアクセスされ得るため、原文・実番号・金額・座標はコピーしません。貼り付け先も確認してください。",14,true,INK));
         for(int number=1;number<=receipt.items.size();number++){
             List<ReceiptParser.Decision> related=ReceiptParser.decisionsForCandidate(receipt,number);
             String adoption="採用理由の対応行なし";
             for(ReceiptParser.Decision decision:related)
                 if(decision.kind==ReceiptParser.Kind.ITEM){adoption=decision.reason;break;}
             LinearLayout focus=disclosure("候補番号 ["+number+"] / "+adoption+" / 関連行 "+related.size(),body);
+            final int selectedCandidate=number;
+            focus.addView(button("この候補の匿名診断をコピー",()->copyAnonymousCandidateAudit(receipt,selectedCandidate)));
             if(related.isEmpty())focus.addView(text("候補と分類行の対応を追跡できませんでした。推測で補完しません。",12,false,MUTED));
             for(ReceiptParser.Decision decision:related)appendDecisionAudit(focus,decision);
         }
