@@ -330,15 +330,17 @@ public final class MainActivity extends Activity {
     /** Private, opt-in raw text remains hidden until the user expands its own row. */
     private void appendDecisionAudit(LinearLayout target,ReceiptParser.Decision decision){
         target.addView(text("行"+decision.row+" / 領域["+decision.regions+"] / "+decision.kind+"\n理由 "+decision.reason+" / 候補番号 "+decision.candidates,13,true,INK));
+        if(decision.audit!=null)target.addView(text(decision.audit.localStatus(),13,true,INK));
         target.addView(text("判定信号（原文・番号・金額は含みません）：\n"+decision.evidence,12,false,MUTED));
         if(Double.isFinite(decision.left))
             target.addView(text(String.format(Locale.ROOT,"位置 %.0f,%.0f → %.0f,%.0f",decision.left,decision.top,decision.right,decision.bottom),12,false,MUTED));
         LinearLayout privateText=disclosure("原文と正規化を端末内で照合",target);
         privateText.addView(text("原文："+ReceiptParser.visibleText(decision.raw)+"\n正規化："+ReceiptParser.visibleText(decision.normalized),13,false,MUTED));
     }
-    private void copyAnonymousCandidateAudit(ReceiptParser.Receipt receipt,int number){
-        String report=ReceiptParser.anonymizedCandidateAudit(receipt,number);
-        if(report.isEmpty()){toast("この候補の診断情報がありません");return;}
+    private void copyAnonymousCandidateAudit(ReceiptParser.Receipt receipt,int number){copyAnonymousAudit(receipt,number);}
+    private void copyAnonymousAudit(ReceiptParser.Receipt receipt,Integer number){
+        String report=number==null?ReceiptDiagnostics.anonymousReceipt(receipt):ReceiptDiagnostics.anonymousCandidate(receipt,number);
+        if(report.isEmpty()){toast("診断情報がありません");return;}
         android.content.ClipboardManager clipboard=(android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
         if(clipboard==null){toast("クリップボードが利用できません");return;}
         ClipData clip=ClipData.newPlainText("匿名OCR分類診断",report);
@@ -348,7 +350,7 @@ public final class MainActivity extends Activity {
             clip.getDescription().setExtras(extras);
         }
         clipboard.setPrimaryClip(clip);
-        toast("候補 ["+number+"] の匿名診断をコピーしました");
+        toast("固定された判定結果だけをコピーしました");
     }
     private void showClassificationAudit(ReceiptParser.Receipt receipt){
         if(!BuildConfig.DEBUG)return;
@@ -356,6 +358,8 @@ public final class MainActivity extends Activity {
         body.addView(text(buildIdentity(),13,true,INK));
         body.addView(text("解析経路："+receipt.analysisMode+" / 元の操作："+reviewOrigin+"\n候補 "+receipt.items.size()+"件 / 入力行 "+receipt.decisions.size()+"件\nPOSITIONEDは検出座標あり、TEXTは座標なしです。診断は端末内表示のみで、保存・ログ・送信は行いません。原文や管理番号を共有しないでください。",13,false,MUTED));
         body.addView(text("商品候補の番号から採用理由を確認できます。番号は商品候補の表示順です。匿名診断のコピーは明示操作のみ。Androidのクリップボードには他アプリからアクセスされ得るため、原文・実番号・金額・座標はコピーしません。貼り付け先も確認してください。",14,true,INK));
+        body.addView(text("OCR出力に数量表記がない場合、OCRが落としたのか原本に印字がないのかは自動判別できません。元画像との照合は端末内で行ってください。匿名コピーには数値・行番号・候補番号・自由文も含めません。並び順は候補の表示順です。",13,false,MUTED));
+        body.addView(button("全候補と未関連行の匿名診断をまとめてコピー",()->copyAnonymousAudit(receipt,null)));
         for(int number=1;number<=receipt.items.size();number++){
             List<ReceiptParser.Decision> related=ReceiptParser.decisionsForCandidate(receipt,number);
             String adoption="採用理由の対応行なし";
@@ -366,6 +370,9 @@ public final class MainActivity extends Activity {
             focus.addView(button("この候補の匿名診断をコピー",()->copyAnonymousCandidateAudit(receipt,selectedCandidate)));
             if(related.isEmpty())focus.addView(text("候補と分類行の対応を追跡できませんでした。推測で補完しません。",12,false,MUTED));
             for(ReceiptParser.Decision decision:related)appendDecisionAudit(focus,decision);
+            for(ReceiptParser.Decision decision:ReceiptDiagnostics.attemptsForCandidate(receipt,number)){
+                focus.addView(text("この商品への関連付けを試みたが採用しなかった行",13,true,INK));appendDecisionAudit(focus,decision);
+            }
         }
         LinearLayout all=disclosure("すべての領域の分類理由（詳細調査用）",body);
         for(ReceiptParser.Decision decision:receipt.decisions)appendDecisionAudit(all,decision);

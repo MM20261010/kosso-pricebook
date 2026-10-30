@@ -17,15 +17,15 @@ public final class ReceiptClassificationAuditTest {
         check(ReceiptParser.decisionsForCandidate(r,0).isEmpty()&&ReceiptParser.decisionsForCandidate(r,r.items.size()+1).isEmpty()&&ReceiptParser.decisionsForCandidate(null,1).isEmpty(),"invalid candidate cannot expose unrelated rows");
 
         String copied=ReceiptParser.anonymizedCandidateAudit(r,1);
-        check(copied.contains("candidate=1")&&copied.contains("reason=ITEM_POSITIONED_AMOUNT")&&copied.contains("mode=POSITIONED"),"candidate clipboard report gives direct adoption reason");
-        check(copied.contains("adminSignals=")&&copied.contains("labelKind="),"only named structural diagnostic fields appear");
+        check(copied.contains("[CANDIDATE]")&&copied.contains("REASON=ITEM_POSITIONED_AMOUNT")&&copied.contains("ROUTE=POSITIONED"),"candidate clipboard report gives direct adoption reason");
+        check(copied.contains("SUMMARY_STOP=")&&copied.contains("STRONG_HEADING="),"only named structural diagnostic fields appear");
         check(!copied.contains("架空")&&!copied.contains("79")&&!copied.contains("2872")&&!copied.contains("regions="),"clipboard excludes names, amounts and region mapping");
         check(ReceiptParser.anonymizedCandidateAudit(r,0).isEmpty(),"cannot copy invalid candidate");
         r.decisions.add(new ReceiptParser.Decision(99,ReceiptParser.Kind.ITEM,"ITEM_POSITIONED_AMOUNT",
                 "dateAnchor=private-123; freeText=SECRET123; adminSignals=1; identifierShape=true; labelKind=OTHER",
                 null,"SECRET-REGION","SECRET-RAW","SECRET-NORMALIZED",java.util.List.of(1)));
         String guarded=ReceiptParser.anonymizedCandidateAudit(r,1);
-        check(guarded.contains("adminSignals=1")&&!guarded.contains("SECRET")&&!guarded.contains("private-123")&&!guarded.contains("freeText"),"extra and malformed metadata cannot leak into clipboard");
+        check(guarded.contains("REASON=ITEM_POSITIONED_AMOUNT")&&!guarded.contains("adminSignals=")&&!guarded.contains("SECRET")&&!guarded.contains("private-123")&&!guarded.contains("freeText"),"extra and malformed metadata cannot leak into clipboard");
         r.decisions.remove(r.decisions.size()-1);
         check(r.items.size()==6&&r.itemSum()==2872,"combined perturbation excludes both non-products");
         check(r.decisions.stream().anyMatch(d->d.reason.equals("PRE_DATE_HEADER_PRICE_HELD")&&d.candidates.isEmpty()),"pre-date reason excludes ID regardless of label accuracy");
@@ -93,6 +93,74 @@ public final class ReceiptClassificationAuditTest {
                 &&safe.items.stream().anyMatch(x->x.name.equals("小豆8点"))
                 &&safe.items.stream().anyMatch(x->x.name.equals("小計8点セット")),
                 "legitimate first product and small/count-labelled products remain items");
+        // Bounded lookahead: a far-off tax/total pair must not be lost after >5 OCR rows.
+        // Only synthetic labels; original user receipt text is neither known nor used.
+        OcrDocument src=ReceiptExtractionTest.fixture(0);
+        float subtotalY=0;for(OcrDocument.Region p:src.regions)
+            if(p.text.startsWith("小汁"))subtotalY=p.y(0);
+        List<OcrDocument.Region> late=new ArrayList<>();
+        for(OcrDocument.Region p:src.regions){
+            if(p.text.startsWith("小汁")){
+                late.add(ReceiptAuditScenario.box("小鈄8占: 2872",70,p.y(0),900));
+            }else if(p.y(0)>subtotalY){
+                float[] moved=new float[8];
+                for(int n=0;n<4;n++){moved[2*n]=p.x(n);moved[2*n+1]=p.y(n)+6*44;}
+                late.add(new OcrDocument.Region(p.text,moved));
+            }else late.add(p);
+        }
+        for(int n=1;n<=6;n++)late.add(ReceiptAuditScenario.box("架空の補助行",70,subtotalY+n*44,330));
+        ReceiptParser.Receipt distant=ReceiptParser.parseDocument(new OcrDocument("synthetic distant fiscal footer",1200,1800,late));
+        check(distant.items.size()==6&&distant.itemSum()==2872&&Long.valueOf(2872).equals(distant.subtotal),
+                "subtotal with punctuation OCR artifact and fiscal footer more than five rows later");
+        check(distant.decisions.stream().anyMatch(x->x.kind==ReceiptParser.Kind.SUBTOTAL&&x.candidates.isEmpty()),
+                "distant genuine tax/total footer supports a separated summary");
+        check(distant.items.stream().anyMatch(x->x.price==158&&Integer.valueOf(2).equals(x.quantity)&&Long.valueOf(79).equals(x.unitPrice))
+                &&distant.items.stream().anyMatch(x->x.price==490&&Integer.valueOf(2).equals(x.quantity)&&Long.valueOf(245).equals(x.unitPrice)),
+                "distant footer does not change known paired quantities");
+        List<OcrDocument.Region> genuine=Arrays.asList(
+                ReceiptAuditScenario.box("2026/10/27",70,30,400),
+                ReceiptAuditScenario.box("架空牛乳",70,100,380),ReceiptAuditScenario.box("100",850,104,140),
+                ReceiptAuditScenario.box("架空パン",70,170,380),ReceiptAuditScenario.box("200",850,174,140),
+                ReceiptAuditScenario.box("小豆8点",70,240,380),ReceiptAuditScenario.box("300",850,244,140),
+                ReceiptAuditScenario.box("税額",70,310,200),ReceiptAuditScenario.box("10",850,314,140),
+                ReceiptAuditScenario.box("合計610",70,375,900));
+        ReceiptParser.Receipt inverse=ReceiptParser.parseDocument(new OcrDocument("synthetic product with coincidental sum",1200,1000,genuine));
+        check(inverse.items.size()==3&&inverse.items.get(2).name.equals("小豆8点"),
+                "genuine small-name product retained even when price equals prior-item sum near footer");
+        // Reproduce the screenshot's visually "小辻8点" OCR error, without raw receipt data.
+        List<OcrDocument.Region> tsuji=new ArrayList<>();
+        for(OcrDocument.Region part:orphan){
+            if(part.text.equals("小鈄8占"))
+                tsuji.add(ReceiptAuditScenario.box("小辻8点",part.x(0),part.y(0),300));
+            else tsuji.add(part);
+        }
+        ReceiptParser.Receipt tsujiReceipt=ReceiptParser.parseDocument(new OcrDocument("fictional tsuji subtotal without footer",1200,1600,tsuji));
+        check(tsujiReceipt.items.size()==6&&tsujiReceipt.itemSum()==2872,
+                "OCR 計→辻: six real items, no false seventh subtotal item");
+        check(tsujiReceipt.decisions.stream().anyMatch(x->x.raw.contains("小辻8点")
+                &&x.kind==ReceiptParser.Kind.HELD&&x.reason.equals("SUMMARY_LIKE_NO_FOOTER_HELD")
+                &&x.candidates.isEmpty()&&x.evidence.contains("labelKind=OTHER")
+                &&x.audit.summary.sumMatches==ReceiptDiagnostics.Gate.PASS&&x.audit.summary.futureFooter==ReceiptDiagnostics.Gate.FAIL),
+                "tsuji summary held with the same anonymous signals seen on device");
+        check(tsujiReceipt.subtotal==null&&tsujiReceipt.printedItemCount==null,
+                "no visible footer means subtotal and count are not silently confirmed");
+        check(tsujiReceipt.items.stream().anyMatch(x->x.price==158&&Integer.valueOf(2).equals(x.quantity)&&Long.valueOf(79).equals(x.unitPrice))
+                &&tsujiReceipt.items.stream().anyMatch(x->x.price==490&&Integer.valueOf(2).equals(x.quantity)&&Long.valueOf(245).equals(x.unitPrice)),
+                "tsuji guard preserves correct pairings 79x2 and 245x2");
+        for(String[] example:new String[][]{{"小辻8点","2873"},{"小辻2点","2872"},{"小辻8点セット","2872"}}){
+            String name=example[0],price=example[1];
+            List<OcrDocument.Region> inverseTsuji=new ArrayList<>();
+            for(OcrDocument.Region part:tsuji){
+                if(part.text.equals("小辻8点"))
+                    inverseTsuji.add(ReceiptAuditScenario.box(name,part.x(0),part.y(0),300));
+                else if(part.text.equals("2872")&&Math.abs(part.y(0)-subtotalY)<35)
+                    inverseTsuji.add(ReceiptAuditScenario.box(price,part.x(0),part.y(0),140));
+                else inverseTsuji.add(part);
+            }
+            ReceiptParser.Receipt shouldKeep=ReceiptParser.parseDocument(new OcrDocument("fictional product inverse",1200,1600,inverseTsuji));
+            check(shouldKeep.items.size()==7&&shouldKeep.items.stream().anyMatch(x->x.name.equals(name)),
+                    "avoid dropping legitimate product when sum, count or shape diverges: "+name);
+        }
         check(ReceiptParser.visibleText("取\u200b引").equals("取〈U+200B〉引"),"local text display makes invisible formatting explicit");
         System.out.println("PASS ReceiptClassificationAudit "+checks+" targeted checks");return checks;
     }
