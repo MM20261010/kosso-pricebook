@@ -235,12 +235,12 @@ public final class ReceiptParser {
     private static boolean strongSubtotalHeading(String heading){
         // Without a visible tax/total footer only hold an exceptionally compact subtotal-like label.
         // Do not hide products like "小豆8点" or "小計8点セット".
-        return compact(heading).matches("^小(?:計|訐|討|汁|什|十|鈄|言十)[0-9]{1,3}(?:点|奌|占|卓)$");
+        return compact(heading).matches("^小(?:計|訐|討|汁|什|十|鈄|言十|辻)[0-9]{1,3}(?:点|奌|占|卓)$");
     }
     private static boolean plausibleSubtotalHeading(String heading){
         // No general one-edit matching here: 小豆8点 is a plausible real product.
         // Allow a single punctuation artifact after a known subtotal-like short label.
-        return compact(heading).matches("^小(?:計|訐|討|汁|什|十|鈄|言十)[0-9]{1,3}(?:点|奌|占|卓)[：:.]?$");
+        return compact(heading).matches("^小(?:計|訐|討|汁|什|十|鈄|言十|辻)[0-9]{1,3}(?:点|奌|占|卓)[：:.]?$");
     }
     private static boolean structuralSubtotal(List<Input> input,int index,Receipt r,int width){
         if(r.items.size()<2)return false;
@@ -250,6 +250,11 @@ public final class ReceiptParser {
         boolean hasFooter=futureSummary(input,index);
         if(!hasFooter&&!strongSubtotalHeading(heading))return false;
         if(hasFooter&&!plausibleSubtotalHeading(heading))return false;
+        // OCR can turn 計 into 辻, also a legitimate name. For this damaged
+        // label without a footer, require independent sum and count checks.
+        // The result is held for review, never a confirmed subtotal.
+        if(!hasFooter&&heading.startsWith("小辻")
+                &&(a.value!=r.itemSum()||points<r.knownQuantitySum()+r.unknownQuantityCount()))return false;
         in.structuralCount=points;in.structural=true;
         if(!amountColumn(input,index,width)){in.holdBoundary=true;in.reason=in.row==null?"SUMMARY_LIKE_NO_POSITION_HELD":"SUMMARY_LIKE_COLUMN_MISMATCH_HELD";return false;}
         if(!hasFooter){

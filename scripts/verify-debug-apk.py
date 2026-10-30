@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check the built/downloaded v0.8.5 debug APK, without receipt data or network access."""
+"""Check the built/downloaded v0.8.6 debug APK, without receipt data or network access."""
 import hashlib
 import os
 import json
@@ -24,7 +24,7 @@ def run(tool, *args):
 run('apksigner', 'verify', apk)
 print('PASS APK signature')
 badging = run('aapt', 'dump', 'badging', apk)
-if "package: name='org.privateprice.pricebook' versionCode='13' versionName='0.8.5-debug-footer-window'" not in badging:
+if "package: name='org.privateprice.pricebook' versionCode='14' versionName='0.8.6-debug-tsuji-subtotal'" not in badging:
     raise SystemExit('Unexpected APK package/version')
 permissions = run('aapt', 'dump', 'permissions', apk)
 actual = re.findall(r"^uses-permission(?:-sdk-\d+)?: name='([^']+)'", permissions, re.MULTILINE)
@@ -34,10 +34,10 @@ manifest = run('aapt', 'dump', 'xmltree', apk, 'AndroidManifest.xml')
 for flag in ('allowBackup', 'fullBackupContent', 'usesCleartextTraffic'):
     if not re.search(r'android:' + flag + r'\(0x[0-9a-f]+\)=\(type 0x12\)0x0\s*$', manifest, re.MULTILINE):
         raise SystemExit('APK must disable ' + flag)
-print('PASS v0.8.5 package, permissions, backup and cleartext settings')
+print('PASS v0.8.6 package, permissions, backup and cleartext settings')
 with zipfile.ZipFile(apk) as archive:
     identity=json.loads(archive.read('assets/build-info.json'))
-    if identity.get('version_code')!=13 or identity.get('version_name')!='0.8.5-debug-footer-window' or identity.get('parser_revision')!='receipt-structure-audit-3' or not re.fullmatch('[0-9a-f]{40}',identity.get('source_commit','')):
+    if identity.get('version_code')!=14 or identity.get('version_name')!='0.8.6-debug-tsuji-subtotal' or identity.get('parser_revision')!='receipt-structure-audit-4' or not re.fullmatch('[0-9a-f]{40}',identity.get('source_commit','')):
         raise SystemExit('Unexpected embedded build provenance')
     if not isinstance(identity.get('working_tree_dirty'),bool):
         raise SystemExit('Missing source worktree state')

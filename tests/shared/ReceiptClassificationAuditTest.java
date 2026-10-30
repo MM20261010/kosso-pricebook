@@ -127,6 +127,40 @@ public final class ReceiptClassificationAuditTest {
         ReceiptParser.Receipt inverse=ReceiptParser.parseDocument(new OcrDocument("synthetic product with coincidental sum",1200,1000,genuine));
         check(inverse.items.size()==3&&inverse.items.get(2).name.equals("小豆8点"),
                 "genuine small-name product retained even when price equals prior-item sum near footer");
+        // Reproduce the screenshot's visually "小辻8点" OCR error, without raw receipt data.
+        List<OcrDocument.Region> tsuji=new ArrayList<>();
+        for(OcrDocument.Region part:orphan){
+            if(part.text.equals("小鈄8占"))
+                tsuji.add(ReceiptAuditScenario.box("小辻8点",part.x(0),part.y(0),300));
+            else tsuji.add(part);
+        }
+        ReceiptParser.Receipt tsujiReceipt=ReceiptParser.parseDocument(new OcrDocument("fictional tsuji subtotal without footer",1200,1600,tsuji));
+        check(tsujiReceipt.items.size()==6&&tsujiReceipt.itemSum()==2872,
+                "OCR 計→辻: six real items, no false seventh subtotal item");
+        check(tsujiReceipt.decisions.stream().anyMatch(x->x.raw.contains("小辻8点")
+                &&x.kind==ReceiptParser.Kind.HELD&&x.reason.equals("SUMMARY_LIKE_NO_FOOTER_HELD")
+                &&x.candidates.isEmpty()&&x.evidence.contains("labelKind=OTHER")
+                &&x.evidence.contains("sumMatches=true")&&x.evidence.contains("futureSummary=false")),
+                "tsuji summary held with the same anonymous signals seen on device");
+        check(tsujiReceipt.subtotal==null&&tsujiReceipt.printedItemCount==null,
+                "no visible footer means subtotal and count are not silently confirmed");
+        check(tsujiReceipt.items.stream().anyMatch(x->x.price==158&&Integer.valueOf(2).equals(x.quantity)&&Long.valueOf(79).equals(x.unitPrice))
+                &&tsujiReceipt.items.stream().anyMatch(x->x.price==490&&Integer.valueOf(2).equals(x.quantity)&&Long.valueOf(245).equals(x.unitPrice)),
+                "tsuji guard preserves correct pairings 79x2 and 245x2");
+        for(String[] example:new String[][]{{"小辻8点","2873"},{"小辻2点","2872"},{"小辻8点セット","2872"}}){
+            String name=example[0],price=example[1];
+            List<OcrDocument.Region> inverseTsuji=new ArrayList<>();
+            for(OcrDocument.Region part:tsuji){
+                if(part.text.equals("小辻8点"))
+                    inverseTsuji.add(ReceiptAuditScenario.box(name,part.x(0),part.y(0),300));
+                else if(part.text.equals("2872")&&Math.abs(part.y(0)-subtotalY)<35)
+                    inverseTsuji.add(ReceiptAuditScenario.box(price,part.x(0),part.y(0),140));
+                else inverseTsuji.add(part);
+            }
+            ReceiptParser.Receipt shouldKeep=ReceiptParser.parseDocument(new OcrDocument("fictional product inverse",1200,1600,inverseTsuji));
+            check(shouldKeep.items.size()==7&&shouldKeep.items.stream().anyMatch(x->x.name.equals(name)),
+                    "avoid dropping legitimate product when sum, count or shape diverges: "+name);
+        }
         check(ReceiptParser.visibleText("取\u200b引").equals("取〈U+200B〉引"),"local text display makes invisible formatting explicit");
         System.out.println("PASS ReceiptClassificationAudit "+checks+" targeted checks");return checks;
     }

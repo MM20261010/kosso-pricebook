@@ -66,7 +66,7 @@ public final class OfflineOcrInstrumentation extends Instrumentation {
             check(BuildConfig.DEBUG);
             try(InputStream in=getTargetContext().getAssets().open("build-info.json")){
                 JSONObject build=new JSONObject(new String(in.readAllBytes(),StandardCharsets.UTF_8));
-                check(build.getInt("version_code")==13&&BuildConfig.VERSION_CODE==13);
+                check(build.getInt("version_code")==14&&BuildConfig.VERSION_CODE==14);
                 check(build.getString("source_commit").equals(BuildConfig.SOURCE_COMMIT)&&build.getBoolean("working_tree_dirty")==BuildConfig.SOURCE_DIRTY);
             }
             checks+=ReceiptClassificationAuditTest.run();
