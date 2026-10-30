@@ -66,11 +66,12 @@ public final class OfflineOcrInstrumentation extends Instrumentation {
             check(BuildConfig.DEBUG);
             try(InputStream in=getTargetContext().getAssets().open("build-info.json")){
                 JSONObject build=new JSONObject(new String(in.readAllBytes(),StandardCharsets.UTF_8));
-                check(build.getInt("version_code")==15&&BuildConfig.VERSION_CODE==15);
+                check(build.getInt("version_code")==16&&BuildConfig.VERSION_CODE==16);
                 check(build.getString("source_commit").equals(BuildConfig.SOURCE_COMMIT)&&build.getBoolean("working_tree_dirty")==BuildConfig.SOURCE_DIRTY);
             }
             checks+=ReceiptClassificationAuditTest.run();
             checks+=ReceiptPairingTest.run();
+            checks+=ReceiptPipelineTest.run();
             PaddleOcr.verifyAssets(getTargetContext().getAssets());checks++;
             JSONArray fixtures;
             try(InputStream in=getContext().getAssets().open("synthetic-manifest.json")){
@@ -150,13 +151,13 @@ public final class OfflineOcrInstrumentation extends Instrumentation {
                 reviewUi(isolated,parsed);parsed=ReceiptExtractionTest.parsed(0);reviewUi(isolated,parsed);
                 ReceiptReview model=new ReceiptReview(parsed);check(model.items.size()==6);check(model.items.stream().noneMatch(i->i.selected||i.grossUnit!=null||i.taxRate!=null));
                 // No inferred item tax allocation: gross 86 for the 79x2 row is a HUMAN test input.
-                ReceiptReview.Item two=model.items.get(1);check(two.printedUnit==79&&two.quantity==2&&two.lineAmount==158);two.grossUnit=86L;two.taxRate=null;two.selected=true;check(!two.ready());two.codeConfirmed=true;check(two.ready());
+                ReceiptReview.Item two=model.items.get(1);check(two.printedUnit==79&&two.quantity==2&&two.lineAmount==168);two.grossUnit=86L;two.taxRate=null;two.selected=true;check(!two.ready());two.codeConfirmed=true;check(two.ready());
                 PriceDb.Purchase reviewed=new PriceDb.Purchase();reviewed.name=two.name;reviewed.key=PriceMath.key(two.name);reviewed.store=model.store;reviewed.date=model.date;reviewed.gross=two.grossUnit;reviewed.quantity=two.quantity;reviewed.taxKnown=false;reviewed.tax=0;reviewed.unit="";reviewed.printedUnit=two.printedUnit;reviewed.lineAmount=two.lineAmount;reviewed.specification=two.specification;reviewed.basis=two.basis.name();
                 db.addReceiptPurchases(java.util.Collections.singletonList(reviewed),parsed,model.store,model.date);
                 db.addMemo(reviewed.name,2);check(db.allMemos().stream().anyMatch(m->m.key.equals(reviewed.key)));
-                PriceDb.Purchase latest=db.latestForProduct(reviewed.key).get(0);check(latest.gross==86&&latest.quantity==2&&!latest.taxKnown);check(latest.printedUnit==79&&latest.lineAmount==158&&latest.basis.equals("EXCLUSIVE"));check(latest.receiptId!=null&&db.receiptSummary(latest.receiptId).contains("3140"));
+                PriceDb.Purchase latest=db.latestForProduct(reviewed.key).get(0);check(latest.gross==86&&latest.quantity==2&&!latest.taxKnown);check(latest.printedUnit==79&&latest.lineAmount==168&&latest.basis.equals("EXCLUSIVE"));check(latest.receiptId!=null&&db.receiptSummary(latest.receiptId).contains("3140"));
                 String full=db.backupJson();check(new JSONObject(full).getString("format").equals("kosso-pricebook-v2"));check(!full.contains("00000000")&&!full.contains("regions")&&!full.contains("raw")&&!full.contains("image"));
-                db.importBackup(full);latest=db.latestForProduct(reviewed.key).get(0);check(!latest.taxKnown&&latest.tax==0&&latest.gross==86);check(latest.specification.equals(reviewed.specification)&&latest.printedUnit==79&&latest.lineAmount==158);check(db.receiptSummary(latest.receiptId).contains("2872"));
+                db.importBackup(full);latest=db.latestForProduct(reviewed.key).get(0);check(!latest.taxKnown&&latest.tax==0&&latest.gross==86);check(latest.specification.equals(reviewed.specification)&&latest.printedUnit==79&&latest.lineAmount==168);check(db.receiptSummary(latest.receiptId).contains("2872"));
                 JSONObject bad=new JSONObject(full);bad.getJSONArray("purchases").getJSONObject(0).put("receiptId",999999999L);
                 try{db.importBackup(bad.toString());throw new AssertionError();}catch(org.json.JSONException expected){checks++;}check(db.backupJson().equals(full));
                 bad=new JSONObject(full);bad.getJSONArray("purchases").getJSONObject(0).put("printedUnit",79.5);

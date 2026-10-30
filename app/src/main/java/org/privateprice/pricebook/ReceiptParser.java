@@ -36,8 +36,12 @@ public final class ReceiptParser {
     public static final class Decision {
         public final int row;public final Kind kind;public final String reason,evidence,regions,raw,normalized;
         public final double left,top,right,bottom;public final List<Integer> candidates;
+        public final ReceiptDiagnostics.RowAudit audit;
         Decision(int row,Kind kind,String reason,String evidence,ReceiptLayout.Row geometry,String regions,String raw,String normalized,List<Integer> candidates){
-            this.row=row;this.kind=kind;this.reason=reason;this.evidence=evidence;this.regions=regions;this.raw=raw;this.normalized=normalized;
+            this(row,kind,reason,evidence,geometry,regions,raw,normalized,candidates,null);
+        }
+        Decision(int row,Kind kind,String reason,String evidence,ReceiptLayout.Row geometry,String regions,String raw,String normalized,List<Integer> candidates,ReceiptDiagnostics.RowAudit audit){
+            this.audit=audit;this.row=row;this.kind=kind;this.reason=reason;this.evidence=evidence;this.regions=regions;this.raw=raw;this.normalized=normalized;
             left=geometry==null?Double.NaN:geometry.left;top=geometry==null?Double.NaN:geometry.top;right=geometry==null?Double.NaN:geometry.right;bottom=geometry==null?Double.NaN:geometry.bottom;
             this.candidates=java.util.Collections.unmodifiableList(new ArrayList<>(candidates));
         }
@@ -53,48 +57,9 @@ public final class ReceiptParser {
         return java.util.Collections.unmodifiableList(rows);
     }
 
-    // Only the fixed schema below can reach Android's user-invoked clipboard.
-    // Do not copy raw OCR, product names, receipt/region IDs, amounts, coordinates, dates, or free-form evidence.
-    private static final String[] AUDIT_COPY_FIELDS = {
-        "dateAnchor", "headerAnchor", "aboveDate", "adminSignals", "identifierShape",
-        "smallHeading", "countHint", "amountColumn", "sumMatches", "futureSummary",
-        "itemsBefore", "labelKind"
-    };
-    private static boolean safeAuditValue(String key,String value){
-        if(key.equals("dateAnchor"))return value.equals("none")||value.matches("[0-9]{1,3}");
-        if(key.equals("adminSignals")||key.equals("itemsBefore"))return value.matches("[0-9]{1,3}");
-        if(key.equals("labelKind")){
-            for(Kind kind:Kind.values())if(kind.name().equals(value))return true;
-            return false;
-        }
-        return value.equals("true")||value.equals("false");
-    }
-    /** Sanitized, candidate-scoped only. Intended for explicit clipboard copy, never automatic sharing. */
+    /** Compatibility entry point; all clipboard output now uses the enum-only exporter. */
     public static String anonymizedCandidateAudit(Receipt receipt,int candidateNumber){
-        if(receipt==null||candidateNumber<1||candidateNumber>receipt.items.size())return "";
-        StringBuilder report=new StringBuilder("OCR分類診断（匿名）\n");
-        report.append("mode=").append("POSITIONED".equals(receipt.analysisMode)?"POSITIONED":"TEXT").append('\n');
-        report.append("candidate=").append(candidateNumber).append('\n');
-        Candidate candidate=receipt.items.get(candidateNumber-1);
-        report.append("unitKnown=").append(candidate.unitPrice!=null).append('\n');
-        report.append("quantityKnown=").append(candidate.quantity!=null).append('\n');
-        List<Decision> related=decisionsForCandidate(receipt,candidateNumber);
-        report.append("linkedRows=").append(related.size()).append('\n');
-        for(Decision decision:related){
-            report.append("row=").append(decision.row).append("; kind=").append(decision.kind.name()).append('\n');
-            report.append("reason=").append(decision.reason.matches("[A-Z][A-Z0-9_]{0,63}")?decision.reason:"UNAVAILABLE").append('\n');
-            String[] pieces=decision.evidence.split(";");
-            for(String key:AUDIT_COPY_FIELDS){
-                for(String piece:pieces){
-                    String[] pair=piece.trim().split("=",2);
-                    if(pair.length==2&&pair[0].equals(key)&&safeAuditValue(key,pair[1].trim())){
-                        report.append(key).append('=').append(pair[1].trim()).append('\n');
-                        break;
-                    }
-                }
-            }
-        }
-        return report.toString();
+        return ReceiptDiagnostics.anonymousCandidate(receipt,candidateNumber);
     }
 
     public static final class Receipt {
@@ -155,12 +120,15 @@ public final class ReceiptParser {
     private static final Pattern UNIT_ONLY=Pattern.compile("^(?:@\\s*|単価\\s*[¥]?\\s*|¥\\s*)?("+MONEY+")\\s*円?\\s*[×xX]\\s*([0-9]{1,3})\\s*(?:個|点|本|袋|枚)?(?:\\s*=\\s*[¥]?("+MONEY+")\\s*円?\\s*[CVcv*※軽外内非]*)?$");
     private static final Pattern NAMED_PAIR=Pattern.compile("^単価\\s*[¥]?\\s*("+MONEY+")\\s*円?\\s*数量\\s*([0-9]{1,3})\\s*(?:個|点|本|袋|枚)?$");
     private static final Pattern REVERSED_PAIR=Pattern.compile("^数量\\s*([0-9]{1,3})\\s*(?:個|点|本|袋|枚)?\\s*単価\\s*[¥]?\\s*("+MONEY+")\\s*円?$");
+    private static final Pattern UNIT_LABEL=Pattern.compile("^単価\\s*[¥]?\\s*("+MONEY+")\\s*円?$");
+    private static final Pattern COUNT_LABEL=Pattern.compile("^(?:数量|個数)\\s*([0-9]{1,3})\\s*(?:個|点|本|袋|枚|パック)?$");
+    private static final Pattern OBSERVED_PAIR=Pattern.compile("(?<![\\p{L}0-9])"+MONEY+"\\s*円?\\s*[×xX]\\s*[0-9]{1,3}(?![0-9])");
     private static final Pattern COUNT_ONLY=Pattern.compile("^(?:数量\\s*|個数\\s*)?([0-9]{1,3})\\s*(?:個|点|本|袋|枚|パック)$");
     private static final Pattern COUNT_PREFIX=Pattern.compile("^(?:数量\\s*|個数\\s*)?([0-9]{1,3})\\s*(?:個|点|本|袋|枚|パック)(?:\\s+|$)");
     private static final Pattern NAMED_UNIT=Pattern.compile("(?:^|\\s)単価\\s*[¥]?("+MONEY+")円?");
-    private static final class Input {String text,code="",reason="UNCLASSIFIED_HELD",evidence="not_evaluated";Kind finalKind=Kind.OTHER;Integer structuralCount,directCandidate;boolean structural,holdBoundary,codeUncertain;ReceiptLayout.Row row;Input(String s,ReceiptLayout.Row r){text=s;row=r;}}
+    private static final class Input {String text,code="",reason="UNCLASSIFIED_HELD",evidence="not_evaluated";Kind finalKind=Kind.OTHER;Integer structuralCount,directCandidate;boolean structural,holdBoundary,codeUncertain;ReceiptLayout.Row row;ReceiptDiagnostics.Summary summary;ReceiptDiagnostics.Extraction extraction=ReceiptDiagnostics.Extraction.NONE;ReceiptDiagnostics.Association association=ReceiptDiagnostics.Association.NOT_ATTEMPTED;Integer attemptedCandidate;Input(String s,ReceiptLayout.Row r){text=s;row=r;}}
     private static final class Pending {String name,raw;Integer quantity;Long unit;ReceiptLayout.Row row;int parts=1;boolean uncertain;Pending(String name,ReceiptLayout.Row row){this.name=name;raw=name;this.row=row;}}
-    private static final class Detail {Integer quantity;Long unit,total;boolean invalidTotal;String expression;}
+    private static final class Detail {Integer quantity;Long unit,total;boolean invalidTotal,explicitCount;String expression;}
     private static final class Amount {String name,markers;Long value;Integer rate;AmountBasis basis;boolean rateUncertain;}
     static String specificationText(String name){
         Matcher m=Pattern.compile("(?i)(?<![0-9])([0-9]+(?:[.][0-9]+)?\\s*(?:kg|g|ml|l|枚入|個入|本入|袋入|枚|パック))(?![A-Za-z])").matcher(name);
@@ -239,39 +207,49 @@ public final class ReceiptParser {
         Matcher m=Pattern.compile("(?<![0-9])([0-9]{1,3})(?:点|奌|占|卓)(?![\\p{L}0-9])").matcher(compact(s));
         return m.find()?count(m.group(1)):null;
     }
+    private static final String SUBTOTAL_STEM="小(?:計|訐|討|汁|什|十|鈄|言十|辻)";
     private static boolean strongSubtotalHeading(String heading){
         // Without a visible tax/total footer only hold an exceptionally compact subtotal-like label.
         // Do not hide products like "小豆8点" or "小計8点セット".
-        return compact(heading).matches("^小(?:計|訐|討|汁|什|十|鈄|言十|辻)[0-9]{1,3}(?:点|奌|占|卓)$");
+        return compact(heading).matches("^"+SUBTOTAL_STEM+"[0-9]{1,3}(?:点|奌|占|卓)$");
     }
     private static boolean plausibleSubtotalHeading(String heading){
         // No general one-edit matching here: 小豆8点 is a plausible real product.
         // Allow a single punctuation artifact after a known subtotal-like short label.
-        return compact(heading).matches("^小(?:計|訐|討|汁|什|十|鈄|言十|辻)[0-9]{1,3}(?:点|奌|占|卓)[：:.]?$");
+        return compact(heading).matches("^"+SUBTOTAL_STEM+"[0-9]{1,3}(?:点|奌|占|卓)[：:.]?$");
     }
-    private static boolean structuralSubtotal(List<Input> input,int index,Receipt r,int width){
-        if(r.items.size()<2)return false;
-        Input in=input.get(index);Amount a=amount(normal(in.text));if(a==null||a.value==null)return false;
-        String heading=compact(a.name);Integer points=summaryCount(heading);
-        if(!heading.startsWith("小")||heading.length()>12||points==null)return false;
-        boolean hasFooter=futureSummary(input,index);
-        if(!hasFooter&&!strongSubtotalHeading(heading))return false;
-        if(hasFooter&&!plausibleSubtotalHeading(heading))return false;
-        // OCR can turn 計 into 辻, also a legitimate name. For this damaged
-        // label without a footer, require independent sum and count checks.
-        // The result is held for review, never a confirmed subtotal.
-        if(!hasFooter&&heading.startsWith("小辻")
-                &&(a.value!=r.itemSum()||points<r.knownQuantitySum()+r.unknownQuantityCount()
-                    ||r.unknownQuantityCount()==0&&points!=r.knownQuantitySum()))return false;
-        in.structuralCount=points;in.structural=true;
-        if(!amountColumn(input,index,width)){in.holdBoundary=true;in.reason=in.row==null?"SUMMARY_LIKE_NO_POSITION_HELD":"SUMMARY_LIKE_COLUMN_MISMATCH_HELD";return false;}
-        if(!hasFooter){
-            // Retain this as an unconfirmed summary-like boundary without inventing an amount.
-            // No visible footer: even a matching item sum alone cannot prove a subtotal.
-            in.holdBoundary=true;in.reason="SUMMARY_LIKE_NO_FOOTER_HELD";return false;
+    private static boolean structuralSubtotal(List<Input> input,int index,Receipt r,int width,Kind kind,boolean afterTotal){
+        Input in=input.get(index);Amount a=amount(normal(in.text));
+        String heading=a==null?normal(in.text):compact(a.name);Integer points=summaryCount(heading);
+        boolean footer=futureSummary(input,index),strong=strongSubtotalHeading(heading),plausible=plausibleSubtotalHeading(heading);
+        boolean column=amountColumn(input,index,width),sum=a!=null&&a.value!=null&&a.value==r.itemSum();
+        ReceiptDiagnostics.CountCheck count=points==null?ReceiptDiagnostics.CountCheck.NO_HINT
+            :points<r.knownQuantitySum()+r.unknownQuantityCount()?ReceiptDiagnostics.CountCheck.BELOW_MINIMUM
+            :r.unknownQuantityCount()==0?(points==r.knownQuantitySum()?ReceiptDiagnostics.CountCheck.EXACT_KNOWN:ReceiptDiagnostics.CountCheck.KNOWN_CONTRADICTION)
+            :ReceiptDiagnostics.CountCheck.POSSIBLE_WITH_UNKNOWN;
+        ReceiptDiagnostics.SummaryStop stop;
+        if(kind!=Kind.OTHER||afterTotal)stop=ReceiptDiagnostics.SummaryStop.INELIGIBLE;
+        else if(r.items.size()<2)stop=ReceiptDiagnostics.SummaryStop.TOO_FEW_ITEMS;
+        else if(a==null||a.value==null)stop=ReceiptDiagnostics.SummaryStop.NO_AMOUNT;
+        else if(!heading.startsWith("小")||heading.length()>12)stop=ReceiptDiagnostics.SummaryStop.NOT_SMALL_HEADING;
+        else if(points==null)stop=ReceiptDiagnostics.SummaryStop.NO_COUNT_HINT;
+        else if(!footer&&!strong||footer&&!plausible)stop=ReceiptDiagnostics.SummaryStop.HEADING_NOT_ALLOWED;
+        else if(!footer&&heading.startsWith("小辻")&&!sum)stop=ReceiptDiagnostics.SummaryStop.SUM_CONTRADICTION;
+        else if(!footer&&heading.startsWith("小辻")&&(count==ReceiptDiagnostics.CountCheck.BELOW_MINIMUM||count==ReceiptDiagnostics.CountCheck.KNOWN_CONTRADICTION))stop=ReceiptDiagnostics.SummaryStop.COUNT_CONTRADICTION;
+        else if(!column)stop=in.row==null?ReceiptDiagnostics.SummaryStop.NO_POSITION:ReceiptDiagnostics.SummaryStop.COLUMN_MISMATCH;
+        else if(!footer)stop=ReceiptDiagnostics.SummaryStop.NO_FOOTER_HELD;
+        else stop=sum?ReceiptDiagnostics.SummaryStop.MATCHED:ReceiptDiagnostics.SummaryStop.AMOUNT_MISMATCH_HELD;
+        // This object is the actual branch result, not a second approximate diagnostic predicate.
+        in.summary=new ReceiptDiagnostics.Summary(stop,heading.matches("^"+SUBTOTAL_STEM+".*"),strong,plausible,points!=null,column,sum,footer,count);
+        switch(stop){
+            case NO_POSITION:in.reason="SUMMARY_LIKE_NO_POSITION_HELD";break;
+            case COLUMN_MISMATCH:in.reason="SUMMARY_LIKE_COLUMN_MISMATCH_HELD";break;
+            case NO_FOOTER_HELD:in.reason="SUMMARY_LIKE_NO_FOOTER_HELD";break;
+            case AMOUNT_MISMATCH_HELD:in.reason="SUMMARY_LIKE_AMOUNT_MISMATCH_HELD";break;
+            case MATCHED:in.reason="SUBTOTAL_COLUMN_COUNT_SUM_FOOTER";in.structural=true;in.structuralCount=points;return true;
+            default:return false;
         }
-        if(a.value==r.itemSum()){in.reason="SUBTOTAL_COLUMN_COUNT_SUM_FOOTER";return true;}
-        in.holdBoundary=true;in.reason="SUMMARY_LIKE_AMOUNT_MISMATCH_HELD";return false;
+        in.structural=true;in.structuralCount=points;in.holdBoundary=true;return false;
     }
     public static String visibleText(String s){
         StringBuilder out=new StringBuilder();for(int i=0;i<s.length();i++){char c=s.charAt(i);if(c=='\u200b'||c=='\ufeff'||c=='\u2060'||c=='\u00ad')out.append(String.format(java.util.Locale.ROOT,"〈U+%04X〉",(int)c));else out.append(c);}return out.toString();
@@ -285,7 +263,7 @@ public final class ReceiptParser {
             Kind k=in.finalKind;String reason=in.reason;
             if(k==Kind.OTHER&&!refs.isEmpty()){k=Kind.ITEM_DETAIL;reason="NAME_USED_IN_ITEM";}
             String regions="";if(in.row!=null){StringBuilder ids=new StringBuilder();for(ReceiptLayout.Part part:in.row.parts){if(ids.length()>0)ids.append(',');ids.append(part.sourceId+1);}regions=ids.toString();}
-            r.decisions.add(new Decision(i+1,k,reason,in.evidence,in.row,regions,in.row==null?in.text:in.row.text,normal(in.text),refs));
+            r.decisions.add(new Decision(i+1,k,reason,in.evidence,in.row,regions,in.row==null?in.text:in.row.text,normal(in.text),refs,rowAudit(in)));
         }
         return r;
     }
@@ -339,19 +317,57 @@ public final class ReceiptParser {
     }
     private static Detail detail(String s){
         Detail d=new Detail();d.expression=s;
-        Matcher u=UNIT_ONLY.matcher(s),q=COUNT_ONLY.matcher(s),named=NAMED_PAIR.matcher(s),reversed=REVERSED_PAIR.matcher(s);
+        Matcher u=UNIT_ONLY.matcher(s),q=COUNT_ONLY.matcher(s),named=NAMED_PAIR.matcher(s),reversed=REVERSED_PAIR.matcher(s),unitLabel=UNIT_LABEL.matcher(s),countLabel=COUNT_LABEL.matcher(s);
         if(u.matches()){d.unit=money(u.group(1));d.quantity=count(u.group(2));d.total=u.group(3)==null?null:money(u.group(3));d.invalidTotal=u.group(3)!=null&&d.total==null;return d.unit!=null&&d.quantity!=null?d:null;}
         if(named.matches()){d.unit=money(named.group(1));d.quantity=count(named.group(2));return d.unit!=null&&d.quantity!=null?d:null;}
         if(reversed.matches()){d.quantity=count(reversed.group(1));d.unit=money(reversed.group(2));return d.unit!=null&&d.quantity!=null?d:null;}
+        if(unitLabel.matches()){d.unit=money(unitLabel.group(1));return d.unit==null?null:d;}
+        if(countLabel.matches()){d.quantity=count(countLabel.group(1));d.explicitCount=true;return d.quantity==null?null:d;}
         if(q.matches()){d.quantity=count(q.group(1));return d.quantity==null?null:d;}return null;
+    }
+    static boolean explicitMeasureText(String text){Detail d=detail(normal(text));return d!=null&&(d.unit!=null||d.explicitCount);}
+    static ReceiptDiagnostics.Token measureToken(String text){
+        if(text.length()>240)return ReceiptDiagnostics.Token.LIMIT_REACHED;
+        String s=normal(text);Detail d=detail(s);
+        if(d!=null){if(d.unit!=null&&d.quantity!=null)return ReceiptDiagnostics.Token.PAIR;if(d.unit!=null)return ReceiptDiagnostics.Token.UNIT_LABEL;if(d.quantity!=null)return d.explicitCount?ReceiptDiagnostics.Token.COUNT_LABEL:ReceiptDiagnostics.Token.BARE_COUNT;}
+        Amount amount=amount(s);String before=amount==null?s:amount.name;
+        for(String label:new String[]{"単価","数量"}){
+            int at=before.indexOf(label);
+            if(at>=0){Detail named=detail(before.substring(at));if(named!=null&&named.unit!=null&&named.quantity!=null)return ReceiptDiagnostics.Token.PAIR;}
+        }
+        if(UNIT.matcher(s).find()||OBSERVED_PAIR.matcher(s).find()||NAMED_PAIR.matcher(s).matches()||REVERSED_PAIR.matcher(s).matches())return ReceiptDiagnostics.Token.PAIR;
+        if(s.matches(".*(?:@|単価|数量|個数|×).*"))return ReceiptDiagnostics.Token.PARTIAL_MARKER;
+        return ReceiptDiagnostics.Token.NONE_OBSERVED;
+    }
+    private static ReceiptDiagnostics.RowAudit rowAudit(Input in){
+        ReceiptDiagnostics.Token raw=ReceiptDiagnostics.Token.NONE_OBSERVED;
+        boolean unit=false,count=false,partial=false;
+        if(in.row!=null)for(ReceiptLayout.Part part:in.row.parts){
+            ReceiptDiagnostics.Token t=measureToken(part.text);
+            if(t==ReceiptDiagnostics.Token.PAIR){raw=t;break;}
+            if(t==ReceiptDiagnostics.Token.LIMIT_REACHED){raw=t;break;}
+            unit|=t==ReceiptDiagnostics.Token.UNIT_LABEL;count|=t==ReceiptDiagnostics.Token.COUNT_LABEL||t==ReceiptDiagnostics.Token.BARE_COUNT;partial|=t==ReceiptDiagnostics.Token.PARTIAL_MARKER;
+        }
+        if(raw==ReceiptDiagnostics.Token.NONE_OBSERVED)raw=unit&&count?ReceiptDiagnostics.Token.COMPLEMENTARY_FIELDS:unit?ReceiptDiagnostics.Token.UNIT_LABEL:count?ReceiptDiagnostics.Token.COUNT_LABEL:partial?ReceiptDiagnostics.Token.PARTIAL_MARKER:ReceiptDiagnostics.Token.NONE_OBSERVED;
+        ReceiptDiagnostics.Layout layout=in.row==null?ReceiptDiagnostics.Layout.TEXT_ONLY:in.row.uncertain?ReceiptDiagnostics.Layout.AMBIGUOUS:in.row.parts.size()==1?ReceiptDiagnostics.Layout.SINGLE_REGION:ReceiptDiagnostics.Layout.MERGED_REGIONS;
+        return new ReceiptDiagnostics.RowAudit(in.row==null?ReceiptDiagnostics.Token.TEXT_NO_REGIONS:raw,measureToken(in.text),layout,in.extraction,in.association,in.summary,in.attemptedCandidate);
     }
     private static Detail middleColumnDetail(String name,ReceiptLayout.Row row){
         if(row==null||row.uncertain||row.parts.size()<3)return null;
-        // Only a complete, isolated unit expression immediately before the amount column.
         ReceiptLayout.Part part=row.parts.get(row.parts.size()-2),price=row.parts.get(row.parts.size()-1);
-        String expression=normal(part.text);
-        if(part.right>=price.left||!name.endsWith(" "+expression))return null;
-        Detail d=detail(expression);return d!=null&&d.unit!=null&&d.total==null&&!d.invalidTotal?d:null;
+        if(part.right>=price.left)return null;
+        for(int parts=1;parts<=2&&row.parts.size()>=parts+2;parts++){
+            String expression=normal(part.text);
+            if(parts==2){
+                ReceiptLayout.Part previous=row.parts.get(row.parts.size()-3);
+                if(previous.right>=part.left)continue;
+                expression=normal(previous.text)+" "+expression;
+            }
+            if(!name.endsWith(" "+expression))continue;
+            Detail d=detail(expression);
+            if(d!=null&&d.unit!=null&&d.quantity!=null&&d.total==null&&!d.invalidTotal)return d;
+        }
+        return null;
     }
     private static Long lastAmount(String s){Amount a=amount(s);return a==null?null:a.value;}
     private static void warn(Receipt r,String s){if(!r.warnings.contains(s))r.warnings.add(s);}
@@ -416,8 +432,7 @@ public final class ReceiptParser {
             String s=normal(source);if(s.isEmpty()){if(++gap>2){pending=null;active=-1;}continue;}
             Kind k=kind(s);
             Amount positionedAmount=amount(s);
-            String heading=positionedAmount==null?s:positionedAmount.name;
-            in.evidence="dateAnchor="+(dateIndex<0?"none":dateIndex+1)+"; headerAnchor="+hasHeader+"; aboveDate="+(dateIndex>=0&&index<dateIndex)+"; adminSignals="+adminSignals(s)+"; identifierShape="+identifierShape(s)+"; smallHeading="+compact(heading).startsWith("小")+"; countHint="+(summaryCount(heading)!=null)+"; amountColumn="+amountColumn(input,index,imageWidth)+"; sumMatches="+(positionedAmount!=null&&positionedAmount.value!=null&&positionedAmount.value==r.itemSum())+"; futureSummary="+futureSummary(input,index)+"; itemsBefore="+r.items.size()+"; labelKind="+k;
+            in.evidence="dateAnchor="+(dateIndex<0?"none":dateIndex+1)+"; headerAnchor="+hasHeader+"; aboveDate="+(dateIndex>=0&&index<dateIndex)+"; adminSignals="+adminSignals(s)+"; identifierShape="+identifierShape(s)+"; labelKind="+k;
 
             if(hasHeader&&index<dateIndex&&positionedAmount!=null&&positionedAmount.value!=null&&positionedAmount.value>0&&k==Kind.OTHER){
                 in.finalKind=adminSignals(s)>0||identifierShape(s)?Kind.MANAGEMENT:Kind.HELD;
@@ -427,7 +442,7 @@ public final class ReceiptParser {
             if(k==Kind.OTHER&&adminSignals(s)>=2&&identifierShape(s)){
                 in.finalKind=Kind.HELD;in.reason="MULTIPLE_ADMIN_SIGNALS_HELD";r.lines.add(new Line(Kind.HELD,source));pending=null;active=-1;continue;
             }
-            if(k==Kind.OTHER&&!afterTotal&&structuralSubtotal(input,index,r,imageWidth))k=Kind.SUBTOTAL;
+            if(structuralSubtotal(input,index,r,imageWidth,k,afterTotal))k=Kind.SUBTOTAL;
             if(in.holdBoundary){afterTotal=true;pending=null;active=-1;in.finalKind=Kind.HELD;r.lines.add(new Line(Kind.HELD,source));continue;}
             if(k==Kind.MANAGEMENT){in.finalKind=k;in.reason="ADMIN_LABEL_STRUCTURE";waitingCode="";waitingCodeRaw="";pending=null;active=-1;r.lines.add(new Line(k,in.row==null?s:in.row.text));continue;}
             if((k==Kind.SUBTOTAL||k==Kind.TOTAL)&&exactKind(s)==Kind.OTHER&&!summaryEvidence(input,index,r,s))k=Kind.OTHER;
@@ -456,18 +471,33 @@ public final class ReceiptParser {
             Detail d=detail(s);
             boolean pendingEquation=d!=null&&d.total!=null&&!d.invalidTotal&&pending!=null&&gap<=2&&ReceiptLayout.adjacent(pending.row,in.row);
             if(d!=null&&!pendingEquation&&!afterTotal&&(k==Kind.OTHER||k==Kind.QUANTITY)){
+                in.extraction=d.unit!=null&&d.quantity!=null?ReceiptDiagnostics.Extraction.PAIR:d.unit!=null?ReceiptDiagnostics.Extraction.UNIT_ONLY:ReceiptDiagnostics.Extraction.COUNT_ONLY;
                 boolean attached=false;in.finalKind=Kind.QUANTITY;in.reason="UNIT_QUANTITY_UNBOUND";
                 if(pending!=null&&d.total==null&&!d.invalidTotal&&gap<=2&&ReceiptLayout.adjacent(pending.row,in.row)){
-                    if(pending.quantity!=null&&!pending.quantity.equals(d.quantity)||pending.unit!=null&&d.unit!=null&&!pending.unit.equals(d.unit)){warn(r,"隣接する単価・数量が競合しています。");pending=null;}
-                    else{pending.quantity=d.quantity;if(d.unit!=null)pending.unit=d.unit;pending.raw+="\n"+s;pending.row=in.row;attached=true;}
+                    if(d.quantity!=null&&pending.quantity!=null&&!pending.quantity.equals(d.quantity)||pending.unit!=null&&d.unit!=null&&!pending.unit.equals(d.unit)){in.association=ReceiptDiagnostics.Association.FIELD_CONFLICT;in.reason="UNIT_QUANTITY_FIELD_CONFLICT";warn(r,"隣接する単価・数量が競合しています。");pending=null;}
+                    else{if(d.quantity!=null)pending.quantity=d.quantity;if(d.unit!=null)pending.unit=d.unit;pending.raw+="\n"+s;pending.row=in.row;attached=true;}
                 }else if(active>=0&&gap==0&&ReceiptLayout.adjacent(activeRow,in.row)){
-                    Candidate old=r.items.get(active);
-                    if(d.invalidTotal||d.total!=null&&d.total!=old.price||d.unit==null&&(old.unitPrice==null||old.unitPrice*d.quantity!=old.price)||d.unit!=null&&d.quantity!=null&&d.unit*d.quantity!=old.price){in.reason="UNIT_QUANTITY_AMOUNT_MISMATCH";warn(r,"隣接する単価×数量が行金額と一致せず、流用しませんでした。");r.lines.add(new Line(Kind.QUANTITY,s));active=-1;gap=0;continue;}
-                    in.directCandidate=active+1;boolean conflict=old.quantity!=null&&!old.quantity.equals(d.quantity)||old.unitPrice!=null&&d.unit!=null&&!old.unitPrice.equals(d.unit);
-                    if(conflict)warn(r,"隣接する単価・数量が競合しています。");
-                    Candidate updated=candidate(r,old.name,old.price,old.raw+"\n"+s,conflict?null:d.quantity,conflict?null:d.unit==null?old.unitPrice:d.unit,old.taxRate,old.markers,old.amountBasis,old.uncertainLayout||conflict);updated.managementCode=old.managementCode;updated.codeUncertain=old.codeUncertain;r.items.set(active,updated);activeRow=in.row;attached=true;if(conflict)active=-1;
-                }else{warn(r,"結び付く商品がない単価・数量行を除外しました。");pending=null;active=-1;}
-                if(attached){in.finalKind=Kind.ITEM_DETAIL;in.reason="UNIT_QUANTITY_BOUND_TO_ITEM";}
+                    Candidate old=r.items.get(active);in.attemptedCandidate=active+1;
+                    Integer mergedQuantity=d.quantity==null?old.quantity:d.quantity;
+                    Long mergedUnit=d.unit==null?old.unitPrice:d.unit;
+                    if(d.unit==null&&!d.explicitCount&&old.unitPrice==null){
+                        in.association=ReceiptDiagnostics.Association.BARE_COUNT_UNPROVEN;in.reason="BARE_COUNT_UNPROVEN";
+                        r.lines.add(new Line(Kind.QUANTITY,s));active=-1;gap=0;continue;
+                    }
+                    if(d.invalidTotal||d.total!=null&&d.total!=old.price||d.unit==null&&!d.explicitCount&&(old.unitPrice==null||old.unitPrice*d.quantity!=old.price)||mergedUnit!=null&&mergedQuantity!=null&&mergedUnit*mergedQuantity!=old.price){in.association=ReceiptDiagnostics.Association.AMOUNT_MISMATCH;in.reason="UNIT_QUANTITY_AMOUNT_MISMATCH";warn(r,"隣接する単価×数量が行金額と一致せず、流用しませんでした。");r.lines.add(new Line(Kind.QUANTITY,s));active=-1;gap=0;continue;}
+                    in.directCandidate=active+1;boolean conflict=d.quantity!=null&&old.quantity!=null&&!old.quantity.equals(d.quantity)||old.unitPrice!=null&&d.unit!=null&&!old.unitPrice.equals(d.unit);
+                    if(conflict){in.association=ReceiptDiagnostics.Association.FIELD_CONFLICT;warn(r,"隣接する単価・数量が競合しています。");}
+                    Candidate updated=candidate(r,old.name,old.price,old.raw+"\n"+s,conflict?null:mergedQuantity,conflict?null:mergedUnit,old.taxRate,old.markers,old.amountBasis,old.uncertainLayout||conflict);updated.managementCode=old.managementCode;updated.codeUncertain=old.codeUncertain;r.items.set(active,updated);activeRow=in.row;attached=true;if(conflict)active=-1;
+                }else{
+                    in.attemptedCandidate=active<0?null:active+1;
+                    in.association=active>=0||pending!=null?ReceiptDiagnostics.Association.GEOMETRY_REJECTED:ReceiptDiagnostics.Association.NO_TARGET;
+                    in.reason=in.association==ReceiptDiagnostics.Association.GEOMETRY_REJECTED?"UNIT_QUANTITY_GEOMETRY_REJECTED":"UNIT_QUANTITY_NO_TARGET";
+                    warn(r,"結び付く商品がない単価・数量行を除外しました。");pending=null;active=-1;
+                }
+                if(attached){in.finalKind=Kind.ITEM_DETAIL;in.reason="UNIT_QUANTITY_BOUND_TO_ITEM";
+                    if(in.association!=ReceiptDiagnostics.Association.FIELD_CONFLICT)in.association=ReceiptDiagnostics.Association.BOUND;
+                    else in.reason="UNIT_QUANTITY_FIELD_CONFLICT";
+                }
                 r.lines.add(new Line(attached?Kind.ITEM_DETAIL:Kind.QUANTITY,s));gap=0;continue;
             }
             if(k!=Kind.OTHER){
@@ -523,7 +553,8 @@ public final class ReceiptParser {
                 if(a.value!=null&&a.value>0&&productName(name)&&r.items.size()<80){
                     if(a.rateUncertain)warn(r,"同一明細に異なる税率があり未確定です。");
                     AmountBasis b=a.basis==AmountBasis.UNKNOWN?r.amountBasis:a.basis;
-                    Candidate item=candidate(r,name,a.value,raw,qty,unit,a.rate,a.markers,b,uncertain);item.managementCode=in.code.isEmpty()?waitingCode:in.code;item.codeUncertain=in.codeUncertain||!waitingCode.isEmpty();if(!waitingCodeRaw.isEmpty())item=codedCandidate(item,waitingCodeRaw);waitingCode="";waitingCodeRaw="";r.items.add(item);in.directCandidate=r.items.size();in.finalKind=Kind.ITEM;in.reason=imageWidth>0?"ITEM_POSITIONED_AMOUNT":"ITEM_TEXT_AMOUNT";r.lines.add(new Line(Kind.ITEM,raw));
+                    in.extraction=qty!=null&&unit!=null?ReceiptDiagnostics.Extraction.PAIR:unit!=null?ReceiptDiagnostics.Extraction.UNIT_ONLY:qty!=null?ReceiptDiagnostics.Extraction.COUNT_ONLY:ReceiptDiagnostics.Extraction.NONE;
+                    Candidate item=candidate(r,name,a.value,raw,qty,unit,a.rate,a.markers,b,uncertain);item.managementCode=in.code.isEmpty()?waitingCode:in.code;item.codeUncertain=in.codeUncertain||!waitingCode.isEmpty();if(!waitingCodeRaw.isEmpty())item=codedCandidate(item,waitingCodeRaw);waitingCode="";waitingCodeRaw="";r.items.add(item);if(qty!=null||unit!=null)in.association=item.quantity!=null||item.unitPrice!=null?ReceiptDiagnostics.Association.INLINE_BOUND:ReceiptDiagnostics.Association.AMOUNT_MISMATCH;in.directCandidate=r.items.size();in.finalKind=Kind.ITEM;in.reason=imageWidth>0?"ITEM_POSITIONED_AMOUNT":"ITEM_TEXT_AMOUNT";r.lines.add(new Line(Kind.ITEM,raw));
                     pending=null;active=r.items.size()-1;activeRow=in.row;gap=0;continue;
                 }
             }

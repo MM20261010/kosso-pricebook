@@ -40,7 +40,7 @@ public final class ReceiptPairingTest {
         List<OcrDocument.Region> regions=Arrays.asList(box("架空パン6枚入",70,60,350),box("79×2点",500,60,180),box("158C",850,64,140));
         ReceiptParser.Receipt r=ReceiptParser.parseDocument(new OcrDocument("",1200,1000,regions));
         check(pair(r,158,79,2),"independent unit column attached to same product, not part of name");
-        check(ReceiptParser.anonymizedCandidateAudit(r,1).contains("unitKnown=true\nquantityKnown=true"),"anonymous audit exposes only pair-known booleans");
+        check(ReceiptParser.anonymizedCandidateAudit(r,1).contains("UNIT=KNOWN\nQUANTITY=KNOWN"),"anonymous audit exposes only pair-known booleans");
         check(r.items.get(0).raw.contains("79×2点"),"original detail stays local in raw");
         r=ReceiptParser.parseReceipt("架空パン6枚入 158C\n@ 79×2\n架空豆腐300g 490V\n@ 245×2\n架空スポンジ359V\n@ 245×2");
         check(r.items.size()==3&&r.items.get(0).unitPrice==79&&r.items.get(0).quantity==2&&r.items.get(1).unitPrice==245&&r.items.get(1).quantity==2,"protected pairs stay with their own lines");
@@ -100,7 +100,7 @@ public final class ReceiptPairingTest {
         check(r.items.size()==6&&r.subtotal==null,"no-footer subtotal is held, not promoted to certain amount");
         System.out.println("PASS ReceiptPairing "+checks+" checks (fictional only)");return checks;
     }
-    private static OcrDocument longReceipt(int count,boolean missing){return longReceipt(count,missing,false);}
+    static OcrDocument longReceipt(int count,boolean missing){return longReceipt(count,missing,false);}
     private static OcrDocument longReceipt(int count,boolean missing,boolean discount){
         List<OcrDocument.Region> a=new ArrayList<>();
         a.add(box("FICTIVE MARKET",70,10,500));a.add(box("2026/10/30 18:00",70,48,500));a.add(box("全品税抜表示",70,86,350));

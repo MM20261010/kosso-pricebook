@@ -9,7 +9,7 @@ def sourceDirty = !providers.exec {
     workingDir rootProject.projectDir
     commandLine 'git', 'status', '--porcelain', '--untracked-files=normal'
 }.standardOutput.asText.get().trim().isEmpty()
-def parserRevision = 'receipt-structure-audit-5'
+def parserRevision = 'receipt-pipeline-audit-6'
 
 
 android {
@@ -19,8 +19,8 @@ android {
         applicationId 'org.privateprice.pricebook'
         minSdk 26
         targetSdk 35
-        versionCode 15
-        versionName '0.8.7-debug-unit-pairing'
+        versionCode 16
+        versionName '0.8.8-debug-pipeline-audit'
         buildConfigField 'String', 'SOURCE_COMMIT', '"' + sourceCommit + '"'
         buildConfigField 'String', 'PARSER_REVISION', '"' + parserRevision + '"'
         buildConfigField 'boolean', 'SOURCE_DIRTY', sourceDirty.toString()
@@ -57,7 +57,7 @@ tasks.register('writeBuildIdentity') {
     doLast {
         def output = identityAssets.get().file('build-info.json').asFile
         output.parentFile.mkdirs()
-        output.text = groovy.json.JsonOutput.toJson([version_code:15, version_name:'0.8.7-debug-unit-pairing', source_commit:sourceCommit, working_tree_dirty:sourceDirty, parser_revision:parserRevision]) + '\n'
+        output.text = groovy.json.JsonOutput.toJson([version_code:16, version_name:'0.8.8-debug-pipeline-audit', source_commit:sourceCommit, working_tree_dirty:sourceDirty, parser_revision:parserRevision]) + '\n'
     }
 }
 tasks.named('preBuild').configure { dependsOn 'writeBuildIdentity' }

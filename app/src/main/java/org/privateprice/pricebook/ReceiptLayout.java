@@ -56,7 +56,7 @@ final class ReceiptLayout {
             row.parts.sort(Comparator.comparingDouble(p->p.left));StringBuilder text=new StringBuilder();
             for(Part p:row.parts){if(text.length()>0)text.append(' ');text.append(p.text.replace('\n',' '));}
             row.text=text.toString();
-            if(row.parts.stream().filter(p->p.text.matches(".*[\\p{L}].*\\s+[¥]?[0-9][0-9,]*\\s*[CVcv*※軽外内非]*$")).count()>1)row.uncertain=true;
+            if(row.parts.stream().filter(p->!ReceiptParser.explicitMeasureText(p.text)&&p.text.matches(".*[\\p{L}].*\\s+[¥]?[0-9][0-9,]*\\s*[CVcv*※軽外内非]*$")).count()>1)row.uncertain=true;
         }
         return rows;
     }

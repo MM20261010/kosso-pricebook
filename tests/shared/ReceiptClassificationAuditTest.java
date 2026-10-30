@@ -17,15 +17,15 @@ public final class ReceiptClassificationAuditTest {
         check(ReceiptParser.decisionsForCandidate(r,0).isEmpty()&&ReceiptParser.decisionsForCandidate(r,r.items.size()+1).isEmpty()&&ReceiptParser.decisionsForCandidate(null,1).isEmpty(),"invalid candidate cannot expose unrelated rows");
 
         String copied=ReceiptParser.anonymizedCandidateAudit(r,1);
-        check(copied.contains("candidate=1")&&copied.contains("reason=ITEM_POSITIONED_AMOUNT")&&copied.contains("mode=POSITIONED"),"candidate clipboard report gives direct adoption reason");
-        check(copied.contains("adminSignals=")&&copied.contains("labelKind="),"only named structural diagnostic fields appear");
+        check(copied.contains("[CANDIDATE]")&&copied.contains("REASON=ITEM_POSITIONED_AMOUNT")&&copied.contains("ROUTE=POSITIONED"),"candidate clipboard report gives direct adoption reason");
+        check(copied.contains("SUMMARY_STOP=")&&copied.contains("STRONG_HEADING="),"only named structural diagnostic fields appear");
         check(!copied.contains("架空")&&!copied.contains("79")&&!copied.contains("2872")&&!copied.contains("regions="),"clipboard excludes names, amounts and region mapping");
         check(ReceiptParser.anonymizedCandidateAudit(r,0).isEmpty(),"cannot copy invalid candidate");
         r.decisions.add(new ReceiptParser.Decision(99,ReceiptParser.Kind.ITEM,"ITEM_POSITIONED_AMOUNT",
                 "dateAnchor=private-123; freeText=SECRET123; adminSignals=1; identifierShape=true; labelKind=OTHER",
                 null,"SECRET-REGION","SECRET-RAW","SECRET-NORMALIZED",java.util.List.of(1)));
         String guarded=ReceiptParser.anonymizedCandidateAudit(r,1);
-        check(guarded.contains("adminSignals=1")&&!guarded.contains("SECRET")&&!guarded.contains("private-123")&&!guarded.contains("freeText"),"extra and malformed metadata cannot leak into clipboard");
+        check(guarded.contains("REASON=ITEM_POSITIONED_AMOUNT")&&!guarded.contains("adminSignals=")&&!guarded.contains("SECRET")&&!guarded.contains("private-123")&&!guarded.contains("freeText"),"extra and malformed metadata cannot leak into clipboard");
         r.decisions.remove(r.decisions.size()-1);
         check(r.items.size()==6&&r.itemSum()==2872,"combined perturbation excludes both non-products");
         check(r.decisions.stream().anyMatch(d->d.reason.equals("PRE_DATE_HEADER_PRICE_HELD")&&d.candidates.isEmpty()),"pre-date reason excludes ID regardless of label accuracy");
@@ -140,7 +140,7 @@ public final class ReceiptClassificationAuditTest {
         check(tsujiReceipt.decisions.stream().anyMatch(x->x.raw.contains("小辻8点")
                 &&x.kind==ReceiptParser.Kind.HELD&&x.reason.equals("SUMMARY_LIKE_NO_FOOTER_HELD")
                 &&x.candidates.isEmpty()&&x.evidence.contains("labelKind=OTHER")
-                &&x.evidence.contains("sumMatches=true")&&x.evidence.contains("futureSummary=false")),
+                &&x.audit.summary.sumMatches==ReceiptDiagnostics.Gate.PASS&&x.audit.summary.futureFooter==ReceiptDiagnostics.Gate.FAIL),
                 "tsuji summary held with the same anonymous signals seen on device");
         check(tsujiReceipt.subtotal==null&&tsujiReceipt.printedItemCount==null,
                 "no visible footer means subtotal and count are not silently confirmed");
