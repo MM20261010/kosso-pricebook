@@ -83,6 +83,10 @@ public final class ReceiptPairingTest {
         check(r.items.size()==19,"missing product text cannot steal neighbouring quantity or make guessed item");
         check(r.items.stream().noneMatch(c->c.name.contains("??")),"unreadable row stays outside products");
         check(r.reconciliation().contains("不一致"),"missing row is caught by printed subtotal");
+        List<OcrDocument.Region> partial=Arrays.asList(box("架空商品欠損",70,30,350),box("架空パン6枚入 @79×2 158C",70,72,920),box("小計258",70,114,920));
+        r=ReceiptParser.parseDocument(new OcrDocument("",1200,500,partial));
+        check(pair(r,158,79,2),"a missing earlier price does not change a complete following product name");
+        check(r.reconciliation().contains("不一致"),"partially read unpriced product remains detectable through subtotal");
         List<OcrDocument.Region> tooMany=new ArrayList<>();for(int i=0;i<81;i++)tooMany.add(box("架空行",70,i*30,100));
         try{new OcrDocument("",1200,2600,tooMany);throw new AssertionError("region limit was bypassed");}catch(IllegalArgumentException expected){checks++;}
         // Baseline v0.8.6 missing-footer case must continue to hold rather than confirm a subtotal.

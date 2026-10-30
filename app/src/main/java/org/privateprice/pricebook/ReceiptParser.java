@@ -504,7 +504,11 @@ public final class ReceiptParser {
                 boolean close=pending!=null&&ReceiptLayout.adjacent(pending.row,in.row);
                 if(close&&(gap==0||qty!=null||unit!=null||pending.quantity!=null)){
                     boolean spec=specification(name);
-                    boolean wrap=in.row!=null&&pending.row!=null&&ReceiptLayout.alignedName(pending.row,in.row,imageWidth)&&productName(name);
+                    // A following row with its own name, unit, count and amount can stand alone.
+                    // Do not prepend a previous product whose amount was lost by OCR.
+                    boolean explicitPair=qty!=null&&unit!=null;
+                    boolean wrap=!explicitPair&&in.row!=null&&pending.row!=null&&ReceiptLayout.alignedName(pending.row,in.row,imageWidth)&&productName(name);
+                    if(explicitPair&&!spec&&!name.isEmpty())warn(r,"直前の商品名らしい行は金額不明のため結合しませんでした。認識漏れを確認してください。");
                     if(name.isEmpty()||spec||wrap){
                         uncertain=pending.uncertain||wrap&&!spec&&!name.isEmpty();name=pending.name+(name.isEmpty()?"":" "+name);raw=pending.raw+"\n"+s;
                         if(qty!=null&&pending.quantity!=null&&!qty.equals(pending.quantity)||unit!=null&&pending.unit!=null&&!unit.equals(pending.unit)){qty=null;unit=null;uncertain=true;warn(r,"隣接する単価・数量が競合しています。");}
