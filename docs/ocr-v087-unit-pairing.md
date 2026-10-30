@@ -32,7 +32,7 @@ v0.8.6の限定的な「小辻」対応を維持する。見出し一致だけ�
 ## 試験
 
 `tests/shared/ReceiptPairingTest.java` をJVMとAndroid instrumentationの双方から実行。
-同一の架空データでv0.8.6を調査した最初の6書式は全て単価・数量未抽出。新テストは10書式、
+同一の架空データでv0.8.6を調査した10書式は全て単価・数量未抽出。新テストは同じ10書式、
 中央列、式の不一致、容量・型番・集計に似た実商品、隣接商品への数量流用を確認する。
 従来の79×2=158、245×2=490と359円商品に数量2を流用しない回帰も維持する。
 
@@ -54,4 +54,45 @@ v0.8.6の限定的な「小辻」対応を維持する。見出し一致だけ�
 
 versionCode 15、`0.8.7-debug-unit-pairing`、parser revision `receipt-structure-audit-5`。
 PR #10の同じ開発ブランチを使用。workflow_dispatchのみ、mainへのマージなし。
-検証結果・最終APKのコミット/ハッシュ/取得先は実行完了後に追記する。実機精度は未検証。
+以下に検証結果と最終APKの識別情報を記録する。実機精度は未検証。
+
+## 確認済みの結果（2026-10-30）
+
+- Actions #22 / run `41004424227`: `debug-apk` / `android-smoke` とも成功。Android合成検査386件。
+  アプリのソースはv0.8.6 `0b5ce867` と同一。実行コミット `bbbb47659909c464ba185dfbba148b3fde4a6246` との差分は隔離CI用workflowだけ。
+  ダウンロードしたAPKでもversionCode14、上記実行コミット、dirty=false、モデル/署名/Manifest等を検証。
+  APK SHA-256: `7e4bca0712b4c9d6433bf42015ae390d9fa9be351a601b1769a75a43320a1a2f`。
+- v0.8.7の実装コミット: `86c52a9`、`c5974aeda4bd8e75fb98f99bf79289faba7415cf`。
+- ローカルJVM回帰598件（従来383＋新しい関連付け/長い明細215）・静的プライバシー基礎検査が合格。
+- ローカルAPK/AndroidテストAPKビルド成功。Lintはエラー0、既存警告6。
+  APKからソースコミット/dirty=false、新しい中央列解析メソッドのDEXを確認。モデル、Manifest、署名、ELF/16K zipalignも合格。
+- ホストJVMの架空解析1標本: 6商品59.0ms、20商品49.9ms、50商品57.0ms。
+  `-Xmx256m` の新規テストスイート全体（JVM・クラス・架空データを含む）の子プロセス最大RSSは115536KiB、実経過517.3ms。
+  冷温/JIT/GCは制御しておらず、純粋なパーサのピークメモリやAndroid実機OCR性能ではない。処理速度の改善を示す比較値でもない。
+- GitHub配布用v0.8.7: [手動run `41005798954`](https://github.com/MM20261010/kosso-pricebook/actions/runs/41005798954)、source `c5974aeda4bd8e75fb98f99bf79289faba7415cf`。
+  `debug-apk` / `android-smoke` とも成功。JVM598件、Androidエミュレータ601件に合格。
+  最終APKもダウンロード後に署名・Manifest・モデル・ELF・16K zipalign・埋込コミットを再検証し、
+  DEXに中央列関連付けと金額欠損時の名称誤結合防止処理が存在することを確認。
+  追加修正前のrun `41005636659` は中止し、配布版には使用していない。
+
+### 実機検証用APK
+
+- [kosso-pricebook-debug-v0.8.7](https://github.com/MM20261010/kosso-pricebook/actions/runs/41005798954/artifacts/12955724005)
+- versionCode **15** / `0.8.7-debug-unit-pairing`、parser revision `receipt-structure-audit-5`
+- APKサイズ: **72,609,211 byte**（約69.2MiB）
+- APK SHA-256: `62c5274c66c3b82b0612276e0e584bf9a2192e7f058fc7e93b324967827a1953`
+- 署名証明書SHA-256: `c3d64beb23e1f90a163950515fa0c58bea87bba02a3bb1e2498bd156e43f0a99`
+- 保存期限: **2026-11-13 14:17 JST**
+
+AndroidのブラウザでGitHubへログインし、上記Artifact ZIPをダウンロード・展開して `app-debug.apk` を開く。
+OSが求めた場合は、そのダウンロード元アプリからのインストールを本人が許可する。
+配布済みv0.8.5/v0.8.6とはデバッグ署名が異なり、上書きインストールはできない。
+旧版に保存済み履歴がある場合だけ、削除前にJSONを端末内へ書き出してファイルを確認し、再インストール後に復元する。
+JSONには元画像・OCR原文は入らないため、同じ写真は別途端末内で保持する。
+
+「管理」でversionCode15 / source `c5974ae` を確認して、同じ端末内写真をPaddleOCRで読む。
+6商品の候補数、79×2=158、245×2=490、359円の商品への数量非流用、名称の忠実性を確認する。
+誤候補が残る場合は該当候補の匿名診断のみを利用できる。画像・原文・実番号の提出は不要。
+
+実機の小計誤候補消失・名称忠実性・明示数量の関連付け・手修正回数は未検証。
+数量印字のない単一購入品、80領域を超える長いレシート、値引や税の配分は引き続き人の確認が必要。
