@@ -1,5 +1,9 @@
 name: Test APK (manual run)
 on:
+  # One-shot CI only on an isolated branch; does not change the PR branch or main.
+  push:
+    branches:
+      - ci/v086-one-shot-20261030
   workflow_dispatch:
     inputs:
       compare_v08_apk:
