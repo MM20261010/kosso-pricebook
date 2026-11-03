@@ -38,7 +38,7 @@ DBスキーマ2とv1/v2 JSON形式は変更しない。集計訂正値は既存r
 - 新しい架空画像を生成し、既存の同じC++/ncnn実モデルによるホスト推論で、6商品＋小計/最終合計候補、税率別の点数・対象額・税額を抽出した。これはAndroid実機の結果ではない。
 - Android用の画像は従来8枚＋新しい1枚。Paddleの画像OCR→座標→解析に数値/分類の検査を追加する。Tesseractは同じ画像で認識の実行と画素不変を検査するが、税内訳の正答率を保証する検査ではない。
 - APK/Android試験APKビルド成功。Lintエラー0、既存警告6。ローカルAPKの署名・Manifest・モデル・ライセンス同梱・ネイティブ安全設定の検査が合格。
-- Android確認画面の集計選択・明示確認・訂正/破棄、未確認商品の保存禁止、SQLite/JSONの税不確実フラグ往復を追加。最終エミュレータ結果と配布APKはCI完了後に記録する。
+- Android確認画面の集計選択・明示確認・訂正/破棄、未確認商品の保存禁止、SQLite/JSONの税不確実フラグ往復を追加。最終エミュレータ結果と配布APKは下記の最終検証を参照。
 
 versionCode18 / 0.8.10-debug-fiscal-review / receipt-fiscal-review-8。
 
@@ -55,3 +55,28 @@ versionCode18 / 0.8.10-debug-fiscal-review / receipt-fiscal-review-8。
 配布前の入力境界補強：税率別税額の合算にも100万円の上限を適用する回帰を追加。中間run41614067219は配布前に中止し、最終成果物には使用しない。
 
 標準略記の補強：厳密な税行の書式判定から「消費税等」や括弧付き税行が外れ、保留小計の後で商品になり得ることを架空文字列で再現して修正した。「消費税等ノート」は商品として維持する逆方向も検査。内消費税という税額ラベルだけで、明示された税抜対象額を税込へ変更しない。run41614542100はこの補強前の中間検証で、最終配布に使わない。
+
+## 最終検証・取得先（2026-11-03 JST）
+
+- [実装ソース90cafd9](https://github.com/MM20261010/kosso-pricebook/commit/90cafd946cb34a7d9a5fdc7f82bc97b123581156)。99e8ce5 / f70dbd1の修正を含む。以後のコミットは検証文書だけ。
+- [手動Actions41616597800](https://github.com/MM20261010/kosso-pricebook/actions/runs/41616597800)：debug-apk / android-smoke **全job成功**。JVM848項目、API35 AOSP x86_64エミュレータ891項目が合格。両者には共通回帰の重複がある。
+- Androidで新しい架空画像の6商品・小計/合計保留・両数量2・条件付き1点・税率別点数/対象額/税額を検査した。9枚を両OCRに渡したが、Tesseractの税内訳正答率は評価していない。画像OCRと認識後の合成座標の検査は区別する。
+- 集計の選択、上部表示、明示反映、未反映編集の保存拒否/破棄、商品未確認の維持、SQLite v1→v2、v1/v2 JSON、税不確実フラグ、既存の買い物メモ参照・重量・原子性の検査も完走。
+- ローカルLintエラー0・既存警告6。GitHubのlintDebugも成功。Actionsの既存Node.js/setup-java/runner移行通知は残るが、今回の修正で無関係なアクション更新は行わない。
+- compare_v08_apk=falseのため任意の旧v0.8 APKとのDEX比較は未実施。現行APKのDEX分類プローブは成功。
+- 中間f70dbd1 / run41614542100もAndroid887項目が成功したが、標準略記補強前なので配布版に使用しない。最終runにはその補強と4つの追加回帰を含む。
+
+[実機用APK Artifact](https://github.com/MM20261010/kosso-pricebook/actions/runs/41616597800/artifacts/13223175840) / `kosso-pricebook-debug-v0.8.10`。
+期限 **2026-11-17 19:24:16 JST**。GitHubへログインし、ZIPを取得・展開して `app-debug.apk` を使用する。synthetic-tests Artifactは開発用で、通常のインストール対象ではない。
+
+- versionCode18 / `0.8.10-debug-fiscal-review` / parser `receipt-fiscal-review-8`。
+- 埋込ソース `90cafd946cb34a7d9a5fdc7f82bc97b123581156` / working_tree_dirty=false。Android上のBuildConfigと埋込情報の照合も合格。
+- APK **72,644,039 byte**。SHA-256 `3006af50480e6115239ad4a840342c95417c5595841fc801ae2c58533add7906`。Artifactから再取得した実ファイルとCIログのハッシュが一致した。
+- 署名v2成功。証明書SHA-256 `4025ecdbb6de7dd4f6d48e666e99f418b143e7410f090e368ae579fa61ad632c`。
+- 再取得したAPKでManifest権限集合、バックアップ/cleartext無効、英日Tesseractと5つのPaddle資産のハッシュ、固定変換元、ライセンス同梱、3 ABI、NX/RELRO・W+Xなし・16K ELF/ZIP配置を検証した。Paddleのネットワーク/プロセス起動API輸入なしを維持。
+- 最終DEXに集計解析クラスを含み、匿名コピー処理には私有の原文・名称・日付・金額・座標フィールド参照がないことを確認した。実データの外部送信やログ出力は追加していない。
+
+旧v0.8.9 Artifactとはデバッグ署名が異なる。**既存履歴がある場合だけ、旧版削除前に端末内JSONへ退避**し、新APK導入後に復元する。履歴がない場合は退避不要。Androidの求めに応じてファイルアプリ等へ「この提供元のアプリを許可」を設定する。
+
+まず保存せずに、同じ写真の上部集計と税率別内訳が原票に合うかを確認できる。候補の採用・訂正を一括反映する際は、未確認商品も確認または明示保留が必要。集計だけ確認して商品単価/数量まで無断確定することはない。
+実機精度・手動修正回数・保存後の値の正しさを合成合格だけで解決済みとはしない。main非変更・Draft PR #10を維持する。
