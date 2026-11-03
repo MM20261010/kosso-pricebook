@@ -123,6 +123,8 @@ public final class ReceiptFiscalTest {
         }
         Receipt noFinal=text("税抜表示\n架空茶200\n小計200\n税額合計16\n現金216");
         check(noFinal.total==null&&new ReceiptReview(noFinal).fiscalStatus().contains("税込の最終合計：未取得"),"subtotal plus tax does not fabricate an OCR final total");
+        Receipt oversizedSum=text("税抜表示\n架空茶200\n8%消費税1000000\n10%消費税1000000");
+        check(oversizedSum.taxAmount==null&&oversizedSum.taxConflict&&oversizedSum.taxAmountUncertain,"derived tax sums obey the same money limit as individual inputs");
         for(String adjustment:new String[]{"商品値引-20","返品-20","ポイント利用20"}){
             Receipt r=text("税込表示\n架空茶200\n小計200\n"+adjustment+"\n合計180");
             check(r.hasDiscount&&new ReceiptReview(r).fiscalStatus().contains("照合：未確定"),"discount/return/point allocation requires review, no silent allocation");

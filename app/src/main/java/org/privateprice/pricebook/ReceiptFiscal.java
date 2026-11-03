@@ -115,6 +115,7 @@ final class ReceiptFiscal {
             if(b.base!=null&&b.tax!=null&&b.amountBasis!=AmountBasis.UNKNOWN&&!compatible(b.base,b.tax,b.rate,b.amountBasis)){b.uncertain=true;receipt.taxConflict=true;}
             allTax&=b.tax!=null&&!b.uncertain;if(b.tax!=null)taxSum+=b.tax;
         }
+        if(taxSum>1_000_000){allTax=false;receipt.taxConflict=true;receipt.taxAmountUncertain=true;}
         if(allTax&&!receipt.taxDetailsPending&&!totalTaxConflict){
             if(receipt.taxAmount==null){receipt.taxAmount=taxSum;receipt.taxAmountFromBreakdown=true;receipt.taxAmountUncertain=true;}
             else if(receipt.taxAmount!=taxSum){receipt.taxConflict=true;receipt.taxAmountUncertain=true;}
