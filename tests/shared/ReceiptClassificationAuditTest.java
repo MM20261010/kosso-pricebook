@@ -125,8 +125,8 @@ public final class ReceiptClassificationAuditTest {
                 ReceiptAuditScenario.box("税額",70,310,200),ReceiptAuditScenario.box("10",850,314,140),
                 ReceiptAuditScenario.box("合計610",70,375,900));
         ReceiptParser.Receipt inverse=ReceiptParser.parseDocument(new OcrDocument("synthetic product with coincidental sum",1200,1000,genuine));
-        check(inverse.items.size()==3&&inverse.items.get(2).name.equals("小豆8点"),
-                "genuine small-name product retained even when price equals prior-item sum near footer");
+        check(inverse.items.size()==2&&inverse.heldItems.size()==1&&inverse.heldItems.get(0).item.name.equals("小豆8点"),
+                "genuine small-name product remains recoverable in review when its price equals the prior-item sum");
         // Reproduce the screenshot's visually "小辻8点" OCR error, without raw receipt data.
         List<OcrDocument.Region> tsuji=new ArrayList<>();
         for(OcrDocument.Region part:orphan){

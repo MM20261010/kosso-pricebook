@@ -62,8 +62,14 @@ public final class ReceiptParser {
         return ReceiptDiagnostics.anonymousCandidate(receipt,candidateNumber);
     }
 
+    /** Recoverable ambiguous aggregate. Never a purchase until the user explicitly restores it. */
+    public static final class HeldItem {
+        public final Candidate item; public final Integer countHint;
+        HeldItem(Candidate item,Integer countHint){this.item=item;this.countHint=countHint;}
+    }
     public static final class Receipt {
         public final List<Candidate> items=new ArrayList<>();
+        public final List<HeldItem> heldItems=new ArrayList<>();
         public final List<Line> lines=new ArrayList<>();
         public final List<Decision> decisions=new ArrayList<>();public String analysisMode="TEXT";
         public final List<String> warnings=new ArrayList<>();
@@ -126,7 +132,7 @@ public final class ReceiptParser {
     private static final Pattern COUNT_ONLY=Pattern.compile("^(?:数量\\s*|個数\\s*)?([0-9]{1,3})\\s*(?:個|点|本|袋|枚|パック)$");
     private static final Pattern COUNT_PREFIX=Pattern.compile("^(?:数量\\s*|個数\\s*)?([0-9]{1,3})\\s*(?:個|点|本|袋|枚|パック)(?:\\s+|$)");
     private static final Pattern NAMED_UNIT=Pattern.compile("(?:^|\\s)単価\\s*[¥]?("+MONEY+")円?");
-    private static final class Input {String text,code="",reason="UNCLASSIFIED_HELD",evidence="not_evaluated";Kind finalKind=Kind.OTHER;Integer structuralCount,directCandidate;boolean structural,holdBoundary,codeUncertain;ReceiptLayout.Row row;ReceiptDiagnostics.Summary summary;ReceiptDiagnostics.Extraction extraction=ReceiptDiagnostics.Extraction.NONE;ReceiptDiagnostics.Association association=ReceiptDiagnostics.Association.NOT_ATTEMPTED;Integer attemptedCandidate;Input(String s,ReceiptLayout.Row r){text=s;row=r;}}
+    private static final class Input {String text,code="",reason="UNCLASSIFIED_HELD",evidence="not_evaluated";Kind finalKind=Kind.OTHER;Integer structuralCount,directCandidate;boolean structural,holdBoundary,codeUncertain,reviewSummary;ReceiptLayout.Row row;ReceiptDiagnostics.Summary summary;ReceiptDiagnostics.Extraction extraction=ReceiptDiagnostics.Extraction.NONE;ReceiptDiagnostics.Association association=ReceiptDiagnostics.Association.NOT_ATTEMPTED;Integer attemptedCandidate;Input(String s,ReceiptLayout.Row r){text=s;row=r;}}
     private static final class Pending {String name,raw;Integer quantity;Long unit;ReceiptLayout.Row row;int parts=1;boolean uncertain;Pending(String name,ReceiptLayout.Row row){this.name=name;raw=name;this.row=row;}}
     private static final class Detail {Integer quantity;Long unit,total;boolean invalidTotal,explicitCount;String expression;}
     private static final class Amount {String name,markers;Long value;Integer rate;AmountBasis basis;boolean rateUncertain;}
@@ -233,6 +239,8 @@ public final class ReceiptParser {
         else if(a==null||a.value==null)stop=ReceiptDiagnostics.SummaryStop.NO_AMOUNT;
         else if(!heading.startsWith("小")||heading.length()>12)stop=ReceiptDiagnostics.SummaryStop.NOT_SMALL_HEADING;
         else if(points==null)stop=ReceiptDiagnostics.SummaryStop.NO_COUNT_HINT;
+        else if((!footer&&!strong||footer&&!plausible)&&sum&&(column||in.row==null)
+                &&(count==ReceiptDiagnostics.CountCheck.POSSIBLE_WITH_UNKNOWN||count==ReceiptDiagnostics.CountCheck.EXACT_KNOWN))stop=ReceiptDiagnostics.SummaryStop.UNKNOWN_HEADING_REVIEW;
         else if(!footer&&!strong||footer&&!plausible)stop=ReceiptDiagnostics.SummaryStop.HEADING_NOT_ALLOWED;
         else if(!footer&&heading.startsWith("小辻")&&!sum)stop=ReceiptDiagnostics.SummaryStop.SUM_CONTRADICTION;
         else if(!footer&&heading.startsWith("小辻")&&(count==ReceiptDiagnostics.CountCheck.BELOW_MINIMUM||count==ReceiptDiagnostics.CountCheck.KNOWN_CONTRADICTION))stop=ReceiptDiagnostics.SummaryStop.COUNT_CONTRADICTION;
@@ -242,6 +250,8 @@ public final class ReceiptParser {
         // This object is the actual branch result, not a second approximate diagnostic predicate.
         in.summary=new ReceiptDiagnostics.Summary(stop,heading.matches("^"+SUBTOTAL_STEM+".*"),strong,plausible,points!=null,column,sum,footer,count);
         switch(stop){
+            case UNKNOWN_HEADING_REVIEW:
+                in.reason="STRUCTURAL_SUMMARY_REVIEW";in.structuralCount=points;in.reviewSummary=true;return false;
             case NO_POSITION:in.reason="SUMMARY_LIKE_NO_POSITION_HELD";break;
             case COLUMN_MISMATCH:in.reason="SUMMARY_LIKE_COLUMN_MISMATCH_HELD";break;
             case NO_FOOTER_HELD:in.reason="SUMMARY_LIKE_NO_FOOTER_HELD";break;
@@ -369,6 +379,12 @@ public final class ReceiptParser {
         }
         return null;
     }
+    static boolean weightSignal(String text){
+        return normal(text).matches("(?is).*(?:量り売|量売|重量|目方|購入重量|100\\s*g\\s*(?:当|あたり|単価)|(?:kg|g)\\s*(?:当たり|あたり|単価)|円\\s*[/／]\\s*(?:100)?\\s*g|[0-9]+(?:[.][0-9]+)?\\s*(?:kg|g)\\s*[×xX]).*");
+    }
+    private static boolean weightDetail(String text){
+        return weightSignal(text)&&normal(text).matches("(?is)^(?:重量|目方|購入重量|100\\s*g|単価|[0-9]+(?:[.][0-9]+)?\\s*(?:kg|g)).*");
+    }
     private static Long lastAmount(String s){Amount a=amount(s);return a==null?null:a.value;}
     private static void warn(Receipt r,String s){if(!r.warnings.contains(s))r.warnings.add(s);}
     private static Candidate candidate(Receipt r,String name,long value,String raw,Integer qty,Long unit,Integer rate,String marks,AmountBasis b,boolean uncertain){
@@ -443,6 +459,12 @@ public final class ReceiptParser {
                 in.finalKind=Kind.HELD;in.reason="MULTIPLE_ADMIN_SIGNALS_HELD";r.lines.add(new Line(Kind.HELD,source));pending=null;active=-1;continue;
             }
             if(structuralSubtotal(input,index,r,imageWidth,k,afterTotal))k=Kind.SUBTOTAL;
+            if(in.reviewSummary||in.holdBoundary){
+                Amount held=amount(s);
+                if(held!=null&&held.value!=null&&held.value>0&&held.name.length()<=120&&r.heldItems.size()<80)
+                    r.heldItems.add(new HeldItem(candidate(r,held.name,held.value,in.row==null?s:in.row.text,null,null,null,held.markers,held.basis==AmountBasis.UNKNOWN?r.amountBasis:held.basis,false),in.structuralCount));
+                if(in.reviewSummary){in.finalKind=Kind.HELD;r.lines.add(new Line(Kind.HELD,source));pending=null;active=-1;continue;}
+            }
             if(in.holdBoundary){afterTotal=true;pending=null;active=-1;in.finalKind=Kind.HELD;r.lines.add(new Line(Kind.HELD,source));continue;}
             if(k==Kind.MANAGEMENT){in.finalKind=k;in.reason="ADMIN_LABEL_STRUCTURE";waitingCode="";waitingCodeRaw="";pending=null;active=-1;r.lines.add(new Line(k,in.row==null?s:in.row.text));continue;}
             if((k==Kind.SUBTOTAL||k==Kind.TOTAL)&&exactKind(s)==Kind.OTHER&&!summaryEvidence(input,index,r,s))k=Kind.OTHER;
@@ -467,6 +489,14 @@ public final class ReceiptParser {
                 r.lines.add(new Line(Kind.STORE,s));pending=null;active=-1;gap=0;continue;
             }
             if(declaration(s)){in.finalKind=Kind.TAX;in.reason="PRICE_BASIS_DECLARATION";waitingCode="";waitingCodeRaw="";r.lines.add(new Line(Kind.TAX,s));pending=null;active=-1;continue;}
+            if(weightDetail(s)&&!afterTotal){
+                in.finalKind=Kind.QUANTITY;in.reason="WEIGHT_DETAIL_REVIEW";
+                if(active>=0&&ReceiptLayout.adjacent(activeRow,in.row)){
+                    Candidate old=r.items.get(active);Candidate next=candidate(r,old.name,old.price,old.raw+"\n"+s,old.quantity,old.unitPrice,old.taxRate,old.markers,old.amountBasis,old.uncertainLayout);
+                    next.managementCode=old.managementCode;next.codeUncertain=old.codeUncertain;r.items.set(active,next);in.directCandidate=active+1;
+                }
+                r.lines.add(new Line(Kind.QUANTITY,s));pending=null;active=-1;continue;
+            }
             if(k==Kind.QUANTITY&&!afterTotal&&(pending!=null||active>=0)&&amount(s)!=null)k=Kind.OTHER;
             Detail d=detail(s);
             boolean pendingEquation=d!=null&&d.total!=null&&!d.invalidTotal&&pending!=null&&gap<=2&&ReceiptLayout.adjacent(pending.row,in.row);

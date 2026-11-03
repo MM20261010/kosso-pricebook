@@ -63,8 +63,8 @@ public final class ReceiptPipelineTest {
         check(r.decisions.stream().anyMatch(d->d.audit.summary!=null&&d.audit.summary.stop==ReceiptDiagnostics.SummaryStop.NO_FOOTER_HELD&&d.audit.summary.strongHeading==ReceiptDiagnostics.Gate.PASS),"actual hold gate and known heading exported");
         for(String heading:new String[]{"小X8点","小辻8点:","小辻8点セット","小豆8点"}){
             r=summary(heading,"2872");
-            check(r.items.size()==7,"unproven heading is not deleted on sum coincidence");
-            ReceiptParser.Decision d=r.decisions.stream().filter(x->x.kind==ReceiptParser.Kind.ITEM&&x.audit.summary!=null&&x.audit.summary.stop==(heading.endsWith("セット")?ReceiptDiagnostics.SummaryStop.NO_COUNT_HINT:ReceiptDiagnostics.SummaryStop.HEADING_NOT_ALLOWED)).findFirst().orElseThrow();
+            check(heading.endsWith("セット")?r.items.size()==7:r.items.size()==6&&r.heldItems.size()==1&&r.heldItems.get(0).item.name.equals(heading),"unproven heading remains a recoverable review row, never silently deleted");
+            ReceiptParser.Decision d=r.decisions.stream().filter(x->(x.kind==ReceiptParser.Kind.ITEM||x.kind==ReceiptParser.Kind.HELD)&&x.audit.summary!=null&&x.audit.summary.stop==(heading.endsWith("セット")?ReceiptDiagnostics.SummaryStop.NO_COUNT_HINT:ReceiptDiagnostics.SummaryStop.UNKNOWN_HEADING_REVIEW)).findFirst().orElseThrow();
             check(d.audit.summary.strongHeading==ReceiptDiagnostics.Gate.FAIL&&d.audit.summary.knownStem==(heading.equals("小X8点")||heading.equals("小豆8点")?ReceiptDiagnostics.Gate.FAIL:ReceiptDiagnostics.Gate.PASS),"unknown label versus known-label formatting is distinguished without copying text");
             check(r.items.get(1).unitPrice==79&&r.items.get(1).quantity==2&&r.items.get(3).unitPrice==245&&r.items.get(3).quantity==2,"both protected pairs survive heading ablations");
         }

@@ -34,7 +34,7 @@ public final class OfflineOcrInstrumentation extends Instrumentation {
                 android.content.pm.ActivityInfo info=getTargetContext().getPackageManager().getActivityInfo(intent.getComponent(),0);
                 activity=(MainActivity)newActivity(MainActivity.class,isolated,null,(android.app.Application)getTargetContext().getApplicationContext(),intent,info,"synthetic",null,null,null);
                 callActivityOnCreate(activity,null);
-                ReceiptReview model=new ReceiptReview(receipt);
+                ReceiptReview model=new ReceiptReview(receipt);model.showQuestions=false;
                 java.lang.reflect.Field f=MainActivity.class.getDeclaredField("reviewModel");f.setAccessible(true);f.set(activity,model);
                 for(String name:new String[]{"reviewText","reviewedText"}){f=MainActivity.class.getDeclaredField(name);f.setAccessible(true);f.set(activity,"synthetic UI only");}
                 f=MainActivity.class.getDeclaredField("content");f.setAccessible(true);android.widget.LinearLayout content=(android.widget.LinearLayout)f.get(activity);content.removeAllViews();
@@ -51,6 +51,45 @@ public final class OfflineOcrInstrumentation extends Instrumentation {
         });
         if(failure.get()!=null)throw new IllegalStateException("Synthetic UI failed",failure.get());
     }
+    private android.widget.TextView findLabel(android.view.View view,String part){
+        if(view instanceof android.widget.TextView&&((android.widget.TextView)view).getText().toString().contains(part))return (android.widget.TextView)view;
+        if(view instanceof android.view.ViewGroup){android.view.ViewGroup group=(android.view.ViewGroup)view;for(int i=0;i<group.getChildCount();i++){android.widget.TextView found=findLabel(group.getChildAt(i),part);if(found!=null)return found;}}return null;
+    }
+    private void confirmationUi(Context isolated)throws Exception{
+        java.util.concurrent.atomic.AtomicReference<Throwable> failure=new java.util.concurrent.atomic.AtomicReference<>();
+        runOnMainSync(()->{
+            MainActivity activity=null;
+            try{
+                android.content.Intent intent=new android.content.Intent(getTargetContext(),MainActivity.class);
+                android.content.pm.ActivityInfo info=getTargetContext().getPackageManager().getActivityInfo(intent.getComponent(),0);
+                activity=(MainActivity)newActivity(MainActivity.class,isolated,null,(android.app.Application)getTargetContext().getApplicationContext(),intent,info,"synthetic confirmation",null,null,null);callActivityOnCreate(activity,null);
+                ReceiptReview model=new ReceiptReview(ReceiptConfirmationTest.fixture("小未読",8));
+                java.lang.reflect.Field field=MainActivity.class.getDeclaredField("reviewModel");field.setAccessible(true);field.set(activity,model);
+                for(String name:new String[]{"reviewText","reviewedText"}){field=MainActivity.class.getDeclaredField(name);field.setAccessible(true);field.set(activity,"synthetic confirmation only");}
+                field=MainActivity.class.getDeclaredField("content");field.setAccessible(true);android.widget.LinearLayout content=(android.widget.LinearLayout)field.get(activity);
+                java.lang.reflect.Method render=MainActivity.class.getDeclaredMethod("showOcrReview");render.setAccessible(true);content.removeAllViews();render.invoke(activity);
+                check(visibleText(content).contains("集計か商品か要確認")&&visibleText(content).contains("1点と推定"));
+                check(visibleText(content).contains("79円 × 2点 ＝ 158円")&&visibleText(content).contains("245円 × 2点 ＝ 490円"));
+                check(!visibleText(content).contains("原文：")&&!visibleText(content).contains("検出座標"));
+                ((android.widget.EditText)content.findViewWithTag("batch-gross-0")).setText("200");
+                content.removeAllViews();render.invoke(activity);
+                check(((android.widget.EditText)content.findViewWithTag("batch-gross-0")).getText().toString().equals("200")&&model.items.get(0).grossUnit==null);
+                ((android.widget.EditText)content.findViewWithTag("batch-gross-0")).setText("");
+                findLabel(content,"1点と推定した対象行は").performClick();
+                findLabel(content,"小計・集計として除外").performClick();
+                findLabel(content,"税込単価の入力・税区分をまとめて設定").performClick();
+                findLabel(content,"印字金額は税抜・税率と1点単位端数を確認して換算").performClick();
+                ((android.widget.EditText)content.findViewWithTag("batch-common-rate")).setText("8");
+                findLabel(content,"1点単位で切り捨てと確認").performClick();
+                findLabel(content,"対象行の数量・金額・税区分・集計/商品区分を原票で確認した").performClick();
+                findLabel(content,"確認をまとめて反映（保存は別）").performClick();
+                check(model.held.get(0).choice==ReceiptReview.Choice.SUBTOTAL&&model.items.size()==6);
+                check(model.items.stream().allMatch(i->i.ready()&&i.selected)&&model.items.stream().mapToInt(i->i.quantity).sum()==8);
+                check(model.aggregate().subtotal==2872&&model.items.get(1).printedUnit==79&&model.items.get(3).printedUnit==245);
+            }catch(Throwable e){failure.set(e);}finally{if(activity!=null)callActivityOnDestroy(activity);}
+        });
+        if(failure.get()!=null)throw new IllegalStateException("Synthetic inline confirmation UI failed",failure.get());
+    }
     private int visibleEditors(android.view.View view){
         if(view.getVisibility()!=android.view.View.VISIBLE)return 0;int count=view instanceof android.widget.EditText?1:0;
         if(view instanceof android.view.ViewGroup){android.view.ViewGroup group=(android.view.ViewGroup)view;for(int i=0;i<group.getChildCount();i++)count+=visibleEditors(group.getChildAt(i));}return count;
@@ -66,12 +105,13 @@ public final class OfflineOcrInstrumentation extends Instrumentation {
             check(BuildConfig.DEBUG);
             try(InputStream in=getTargetContext().getAssets().open("build-info.json")){
                 JSONObject build=new JSONObject(new String(in.readAllBytes(),StandardCharsets.UTF_8));
-                check(build.getInt("version_code")==16&&BuildConfig.VERSION_CODE==16);
+                check(build.getInt("version_code")==17&&BuildConfig.VERSION_CODE==17);
                 check(build.getString("source_commit").equals(BuildConfig.SOURCE_COMMIT)&&build.getBoolean("working_tree_dirty")==BuildConfig.SOURCE_DIRTY);
             }
             checks+=ReceiptClassificationAuditTest.run();
             checks+=ReceiptPairingTest.run();
             checks+=ReceiptPipelineTest.run();
+            checks+=ReceiptConfirmationTest.run();
             PaddleOcr.verifyAssets(getTargetContext().getAssets());checks++;
             JSONArray fixtures;
             try(InputStream in=getContext().getAssets().open("synthetic-manifest.json")){
@@ -127,6 +167,7 @@ public final class OfflineOcrInstrumentation extends Instrumentation {
             isolated.deleteDatabase("private_pricebook.db");
             PriceDb db=new PriceDb(isolated);
             try{
+                confirmationUi(isolated);
                 PriceDb.Purchase p=new PriceDb.Purchase();p.name="架空牛乳1L";p.key=PriceMath.key(p.name);p.store="架空テスト店";p.date="2026-10-25";p.gross=218;p.quantity=2;p.tax=8;p.unit="";
                 db.addPurchase(p);String backup=db.backupJson();db.importBackup(backup);
                 List<PriceDb.Purchase> rows=db.recentPurchases(10);check(rows.size()==1);check(rows.get(0).gross==218&&rows.get(0).quantity==2&&rows.get(0).date.equals("2026-10-25"));
@@ -167,6 +208,11 @@ public final class OfflineOcrInstrumentation extends Instrumentation {
                 PriceDb.Purchase invalid=new PriceDb.Purchase();invalid.quantity=0;
                 try{db.addReceiptPurchases(java.util.Arrays.asList(reviewed,invalid),parsed,model.store,model.date);throw new AssertionError();}catch(IllegalArgumentException expected){checks++;}check(db.backupJson().equals(full));
                 db.setChecked(db.allMemos().get(0).id,true);db.setMemoQuantity(db.allMemos().get(0).id,3);check(db.allMemos().get(0).checked&&db.allMemos().get(0).quantity==3);db.resetMemoChecks();check(db.allMemos().stream().noneMatch(m->m.checked));
+                PriceDb.Purchase weighed=new PriceDb.Purchase();weighed.name="架空量り売り肉";weighed.key=PriceMath.key(weighed.name);weighed.store="架空テスト店";weighed.date="2026-11-03";weighed.gross=399;weighed.quantity=1;weighed.taxKnown=false;weighed.tax=0;weighed.size=201.5;weighed.unit="g";weighed.specification="";weighed.lineAmount=399L;weighed.basis="UNKNOWN";
+                db.addPurchase(weighed);String weightedJson=db.backupJson();db.importBackup(weightedJson);PriceDb.Purchase weightRestored=db.latestForProduct(weighed.key).get(0);
+                check(weightRestored.size==201.5&&weightRestored.unit.equals("g")&&weightRestored.gross==399&&weightRestored.quantity==1);
+                check(weightRestored.printedUnit==null&&!weightedJson.contains("quantityState")&&!weightedJson.contains("PROVISIONAL_ONE")&&!weightedJson.contains("raw"));
+                db.deletePurchase(weightRestored.id);
                 long receiptId=db.latestForProduct(reviewed.key).get(0).receiptId;db.deletePurchase(db.latestForProduct(reviewed.key).get(0).id);check(db.receiptSummary(receiptId).isEmpty());check(db.allPurchases().size()==1&&db.allPurchases().get(0).gross==86);
             }finally{db.close();isolated.deleteDatabase("private_pricebook.db");}
             result.putString("status","PASS synthetic-only offline OCR and JSON roundtrip");result.putInt("checks",checks);finish(Activity.RESULT_OK,result);
