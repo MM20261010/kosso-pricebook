@@ -80,6 +80,11 @@ public final class ReceiptConfirmationTest {
         }
         ReceiptReview missingTwo=new ReceiptReview(fixture("小未読",9));
         check(missingTwo.items.stream().noneMatch(i->i.quantityState==ReceiptReview.QuantityState.PROVISIONAL_ONE),"printed count suggesting lost two blocks ordinary one proposals");
+        ReceiptReview countConflict=new ReceiptReview(ReceiptParser.parseReceipt("税抜表示\n架空商品A100\n架空商品B200\n小未読2点300\n購入点数3点"));
+        check(countConflict.held.size()==1&&countConflict.receipt.printedItemCount==3&&countConflict.items.stream().noneMatch(i->i.quantityState==ReceiptReview.QuantityState.PROVISIONAL_ONE),"conflicting aggregate and separate explicit counts must block one estimates, not become absent evidence");
+        ReceiptReview.Batch conflictReview=prepared(countConflict);for(ReceiptReview.Draft d:conflictReview.rows)if(d.held==null)d.quantity="1";
+        rejects(()->countConflict.apply(conflictReview),"choosing an aggregate must not silently overwrite a contradictory explicit total count");
+        conflictReview.acceptMismatch=true;countConflict.apply(conflictReview);check(countConflict.aggregate().subtotalUncertain,"human acknowledgement retains count-conflict caution");
         ReceiptReview.Batch two=prepared(missingTwo);
         for(int i=0;i<two.rows.size();i++)if(two.rows.get(i).held==null){two.rows.get(i).quantity=Integer.toString(i==0?2:missingTwo.items.get(i).source.quantity==null?1:missingTwo.items.get(i).source.quantity);two.rows.get(i).gross="100";}
         two.acceptMismatch=true;missingTwo.apply(two);check(missingTwo.items.stream().mapToInt(i->i.quantity).sum()==9,"human can confirm two after OCR omission, not force all to one");

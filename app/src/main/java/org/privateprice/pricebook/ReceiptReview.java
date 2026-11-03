@@ -98,13 +98,10 @@ final class ReceiptReview {
             if(i.quantity==null&&i.printedUnit==null&&!i.special()&&!mismatch){i.quantity=1;i.quantityState=QuantityState.PROVISIONAL_ONE;}
         }
     }
-    private Integer hintCount(){
-        Integer hint=receipt.printedItemCount;
-        for(Held h:held)if(h.choice==Choice.SUBTOTAL||h.choice==Choice.UNRESOLVED){Integer n=h.source.countHint;if(n!=null){if(hint!=null&&!hint.equals(n))return null;hint=n;}}
-        return hint;
-    }
     private boolean initialMismatch(){
-        int minimum=receipt.knownQuantitySum()+receipt.unknownQuantityCount();Integer hint=hintCount();
+        Integer hint=receipt.printedItemCount;
+        for(Held h:held)if(h.choice==Choice.SUBTOTAL||h.choice==Choice.UNRESOLVED){Integer n=h.source.countHint;if(n!=null){if(hint!=null&&!hint.equals(n))return true;hint=n;}}
+        int minimum=receipt.knownQuantitySum()+receipt.unknownQuantityCount();
         return hint!=null&&minimum!=hint||receipt.subtotal!=null&&receipt.subtotal!=receipt.itemSum()
             ||receipt.total!=null&&(receipt.amountBasis==ReceiptParser.AmountBasis.INCLUSIVE&&receipt.total!=receipt.itemSum()
             ||receipt.amountBasis==ReceiptParser.AmountBasis.EXCLUSIVE&&receipt.taxAmount!=null&&receipt.itemSum()+receipt.taxAmount!=receipt.total);
@@ -173,7 +170,7 @@ final class ReceiptReview {
         }
         return n;
     }
-    private static boolean mismatch(List<Item> items,ReceiptParser.Receipt summary){
+    private boolean mismatch(List<Item> items,ReceiptParser.Receipt summary){
         long sum=0;int count=0;boolean known=true;for(Item i:items){sum+=i.lineAmount;if(i.quantity==null)known=false;else count+=i.quantity;}
         boolean priceMismatch=false,fullGross=true;long paidSum=0;
         for(Item i:items){if(i.grossUnit==null||i.quantity==null||i.deferred)fullGross=false;else paidSum+=i.grossUnit*i.quantity;}
@@ -185,7 +182,8 @@ final class ReceiptReview {
                 priceMismatch|=i.grossUnit<expected.setScale(0,java.math.RoundingMode.FLOOR).longValueExact()||i.grossUnit>expected.setScale(0,java.math.RoundingMode.CEILING).longValueExact();
             }
         }
-        return priceMismatch||summary.printedItemCount!=null&&(count>summary.printedItemCount||known&&count!=summary.printedItemCount)
+        boolean countConflict=receipt.countFromExplicitTotal&&receipt.printedItemCount!=null&&summary.printedItemCount!=null&&!receipt.printedItemCount.equals(summary.printedItemCount);
+        return priceMismatch||countConflict||summary.printedItemCount!=null&&(count>summary.printedItemCount||known&&count!=summary.printedItemCount)
             ||summary.subtotal!=null&&sum!=summary.subtotal
             ||!summary.hasDiscount&&summary.total!=null&&(summary.amountBasis==ReceiptParser.AmountBasis.INCLUSIVE&&sum!=summary.total
                 ||summary.amountBasis==ReceiptParser.AmountBasis.EXCLUSIVE&&summary.taxAmount!=null&&sum+summary.taxAmount!=summary.total);
