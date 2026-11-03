@@ -15,7 +15,7 @@ final class ReceiptFiscal {
     private static final Pattern RATE=Pattern.compile("(?<![0-9])(8|10)\\s*%");
     private static final Pattern NUMBER=Pattern.compile("(?<![0-9,.])("+MONEY+")(?![0-9,.])");
     private static final Pattern COUNT=Pattern.compile("(?<![0-9])([0-9]{1,3})\\s*(?:点|個)");
-    private static final String WORDS="消費税額合計|消費税合計|税額合計|税合計|税計|内消費税|うち消費税|消費税額?|内税額?|外税額?|税額|税金|税率別|税率|標準税率|軽減税率|標準|軽減|課税対象|対象購入点数|購入点数|対象金額|対象額|対象|本体価格|本体|税抜|税込|非課税|課税|うち税|内消費|内計|点計|点数|金額|税|額|内|外|点|個|TAX";
+    private static final String WORDS="消費税額合計|消費税合計|税額合計|税合計|税計|内消費税等?|うち消費税等?|消費税(?:額|等)?|内税額?|外税額?|税額|税金|税率別|税率|標準税率|軽減税率|標準|軽減|課税対象|対象購入点数|購入点数|対象金額|対象額|対象|本体価格|本体|税抜|税込|非課税|課税|うち税|内消費|内計|点計|点数|金額|税|額|内|外|点|個|TAX";
     private enum Role { NONE, BASE, TAX, COLUMNS }
     private final Receipt receipt;
     private Role role=Role.NONE;private String columns="";private int lastTax=-10;
@@ -30,7 +30,7 @@ final class ReceiptFiscal {
     private static boolean numericGrammar(String s){return clean(s).replaceAll("(?i)(?:"+WORDS+")","").replaceAll("[0-9, %¥円()（）:：/*※.+-]","").isEmpty();}
     static boolean taxLike(String text){
         String s=clean(text);
-        return s.length()<=240&&numericGrammar(s)&&(compact(s).matches("(?i)^(?:[(*※ ]*[0-9]{1,3}\\s*%|税|消費税|内税|外税|課税|非課税|軽減|標準|うち税|うち消費税|内消費|内計|点計|対象|TAX).*"));
+        return s.length()<=240&&numericGrammar(s)&&(compact(s).replaceFirst("^[(*※]+","").matches("(?i)^(?:[0-9]{1,3}\\s*%|税|消費税|内税|外税|課税|非課税|軽減|標準|うち税|うち消費税|内消費|内計|点計|対象|TAX).*"));
     }
     static boolean extendedHeading(String text){return compact(text).replace("言十","計").replaceAll("[:：¥()円]","").matches("(?:日[計訐討汁什十]|お会計|会計|お買上計|買上合計|ご利用合計)");}
     static boolean dailyReport(List<ReceiptParser.Input> input){
@@ -50,7 +50,7 @@ final class ReceiptFiscal {
     boolean continuation(String s,int index,ReceiptLayout.Row row){return index-lastTax<=2&&role!=Role.NONE&&RATE.matcher(s).find()&&numericGrammar(s)
         ||pendingRate!=null&&index==pendingIndex+1&&bareAmount(s)!=null&&ReceiptLayout.adjacent(pendingRow,row);}
     private TaxBreakdown band(int rate){for(TaxBreakdown b:receipt.taxBreakdowns)if(b.rate==rate)return b;TaxBreakdown b=new TaxBreakdown(rate);receipt.taxBreakdowns.add(b);return b;}
-    private static AmountBasis basis(String s){boolean net=s.contains("税抜")||s.contains("外税"),gross=s.contains("税込")||s.contains("内税")||s.contains("内消費税");return net==gross?AmountBasis.UNKNOWN:net?AmountBasis.EXCLUSIVE:AmountBasis.INCLUSIVE;}
+    private static AmountBasis basis(String s){boolean net=s.contains("税抜"),gross=s.contains("税込");return net==gross?AmountBasis.UNKNOWN:net?AmountBasis.EXCLUSIVE:AmountBasis.INCLUSIVE;}
     private static Long labeled(String body,String labels){Matcher m=Pattern.compile("(?:"+labels+")\\s*[:：]?\\s*[¥]?\\s*("+MONEY+")(?![0-9,.%点個])").matcher(body);return m.find()?money(m.group(1)):null;}
     private static List<Long> numbers(String body){List<Long> out=new ArrayList<>();Matcher m=NUMBER.matcher(body);while(m.find()){Long v=money(m.group(1));if(v==null)return List.of();out.add(v);}return out;}
     private static boolean compatible(long base,long tax,int rate,AmountBasis basis){
@@ -90,7 +90,7 @@ final class ReceiptFiscal {
         String body=RATE.matcher(s).replaceAll(" ");Matcher count=COUNT.matcher(body);boolean explicitCount=count.find();
         if(explicitCount){int value=Integer.parseInt(count.group(1));if(value<0||value>999)b.uncertain=true;else if(b.itemCount!=null&&b.itemCount!=value){b.uncertain=true;receipt.taxConflict=true;}else b.itemCount=value;body=count.replaceAll(" ");}
         if(body.contains("-")||!numericGrammar(body)){b.uncertain=true;receipt.taxDetailsPending=true;return;}
-        Long base=labeled(body,"課税対象|対象(?:金額|額)?|本体(?:価格)?"),tax=labeled(body,"消費税額?|内消費税|内税額?|外税額?|税額|税(?!率)");
+        Long base=labeled(body,"課税対象|対象(?:金額|額)?|本体(?:価格)?"),tax=labeled(body,"消費税(?:額|等)?|内消費税等?|内税額?|外税額?|税額|税(?!率)");
         List<Long> values=numbers(body);
         if(values.isEmpty()){if(role==Role.BASE||role==Role.TAX){pendingRate=rate;pendingIndex=index;pendingRow=row;}else receipt.taxDetailsPending=true;return;}
         if(role==Role.COLUMNS&&base==null&&tax==null){

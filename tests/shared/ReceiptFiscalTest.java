@@ -62,7 +62,7 @@ public final class ReceiptFiscalTest {
             Receipt r=text("税込表示\n架空茶100\n架空パン200\n小計300\n"+heading+"300\n現金1000\nお釣り700");
             check(r.items.size()==2&&r.total==null&&r.heldItems.stream().anyMatch(h->h.aggregateKind==Kind.TOTAL&&h.item.price==300),"extended labels require context and human classification");
         }
-        for(String product:new String[]{"日計ノート","日計表ノート","日汁うどん","会計ノート","計100ノート","合計金額ノート","消費税額ノート","8%配合架空茶","対象額メモ"}){
+        for(String product:new String[]{"日計ノート","日計表ノート","日汁うどん","会計ノート","計100ノート","合計金額ノート","消費税額ノート","消費税等ノート","8%配合架空茶","対象額メモ"}){
             Receipt r=text("税込表示\n"+product+"100\n架空パン200\n合計300");
             check(r.items.size()==2&&r.items.get(0).name.equals(product)&&r.total==300,"genuine similarly named goods retained");
         }
@@ -81,6 +81,8 @@ public final class ReceiptFiscalTest {
         Receipt separated=text("税抜表示\n架空食品960\n架空洗剤1912\n小計2872\n税抜対象額\n8%5点960\n10%3点1912\n消費税額\n8%77\n10%191\n合計3140");
         check(band(separated,8).base==960&&band(separated,8).tax==77&&band(separated,8).itemCount==5&&band(separated,10).tax==191,"separate target and tax sections join by explicit percent only");
         check(separated.taxAmount==268&&separated.taxAmountUncertain,"separate section tax sum stays derived");
+        for(String taxRow:new String[]{"8%消費税等24","(内消費税等8%24)"}){Receipt r=text("税抜表示\n架空茶100\n架空パン200\n小未読2点300\n"+taxRow+"\n合計324");check(r.items.size()==2&&r.taxAmount==24,"standard abbreviated/parenthesized tax line cannot become a product");}
+        Receipt taxSuffix=text("税抜表示\n架空茶300\n(8%対象額300 消費税等24)\n合計324");check(band(taxSuffix,8).base==300&&band(taxSuffix,8).tax==24&&!taxSuffix.taxConflict,"tax suffix and parentheses preserve explicit base/tax roles and net basis");
         Receipt headerBasis=text("架空茶200\n税抜対象額\n8%200\n消費税額\n8%16");
         check(band(headerBasis,8).amountBasis==AmountBasis.EXCLUSIVE&&band(headerBasis,8).base==200&&band(headerBasis,8).tax==16,"tax section explicitly supplies its basis without inventing global item basis");
         Receipt bareCount=text("税抜表示\n架空茶960\n架空洗剤1912\n税率 点数 対象額 消費税額\n8%5 960 77\n10%3 1912 191");
