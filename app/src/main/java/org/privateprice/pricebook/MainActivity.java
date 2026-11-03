@@ -296,6 +296,7 @@ public final class MainActivity extends Activity {
         EditText date=edit("購入日 YYYY-MM-DD",model.date,InputType.TYPE_CLASS_DATETIME);content.addView(date);
         watch(date,()->model.date=date.getText().toString().trim());
         content.addView(text(model.status(),13,true,INK));
+        content.addView(text(model.fiscalStatus(),15,true,INK));
         content.addView(button(model.showQuestions?"商品一覧・詳細へ":"要確認の項目だけまとめて確認",()->{model.showQuestions=!model.showQuestions;render();}));
         if(model.showQuestions){showReviewQuestions(model);return;}
         LinearLayout actions=row();
@@ -315,7 +316,7 @@ public final class MainActivity extends Activity {
         if(BuildConfig.DEBUG)details.addView(button("ビルド・領域別の分類理由（端末内だけ）",()->showClassificationAudit(receipt)));
         details.addView(text("OCR時点の照合："+receipt.reconciliation(),13,false,MUTED));
         for(String warning:receipt.warnings)details.addView(text("・"+warning,13,false,MUTED));
-        for(ReceiptParser.TaxBreakdown b:receipt.taxBreakdowns)details.addView(text(b.rate+"% 対象額 "+b.base+"円 / 税額 "+b.tax+"円"+(b.uncertain?"（競合）":""),13,false,MUTED));
+        for(ReceiptParser.TaxBreakdown b:receipt.taxBreakdowns)details.addView(text(b.rate+"% / 対象点数 "+(b.itemCount==null?"未取得":b.itemCount+"点")+" / "+ReceiptParser.basisLabel(b.amountBasis)+"対象額 "+(b.base==null?"未取得":b.base+"円")+" / 消費税額 "+(b.tax==null?"未取得":b.tax+"円")+(b.uncertain?"（要確認）":"")+"\n端数方式は未確定。商品単価へ自動配分しません。",13,false,MUTED));
         StringBuilder classified=new StringBuilder();
         for(ReceiptParser.Line line:receipt.lines)if(line.kind!=ReceiptParser.Kind.ITEM&&line.kind!=ReceiptParser.Kind.ITEM_DETAIL)classified.append(line.kind).append("：").append(line.raw).append('\n');
         TextView lines=text(classified.toString(),12,false,MUTED);lines.setTextIsSelectable(true);details.addView(lines);
@@ -426,6 +427,14 @@ public final class MainActivity extends Activity {
         ReceiptReview.Batch batch=model.batch();
         content.addView(button("未反映の入力を破棄して商品一覧へ",()->{model.batch=null;model.showQuestions=false;render();}));
         hint("不確かな項目だけを原票で確認。1点は推定で、確認前は保存できません。名称の変更は商品一覧から任意で行えます。");
+        LinearLayout summaryFields=disclosure("集計金額・方式の確認と訂正",content);
+        summaryFields.addView(text("OCR候補を含みます。空欄は未取得。計算だけで総額を補完しません。税込方式では内税を加算しません。税率別内訳は商品一覧の詳細で確認できます。",13,false,MUTED));
+        EditText summarySubtotal=labeled(summaryFields,"レシート記載の小計 円",batch.subtotal,InputType.TYPE_CLASS_NUMBER);summarySubtotal.setTag("summary-subtotal");watch(summarySubtotal,()->batch.subtotal=summarySubtotal.getText().toString());
+        EditText summaryTax=labeled(summaryFields,"税額合計 円（内訳合算値は原票で確認）",batch.taxAmount,InputType.TYPE_CLASS_NUMBER);summaryTax.setTag("summary-tax");watch(summaryTax,()->batch.taxAmount=summaryTax.getText().toString());
+        EditText summaryTotal=labeled(summaryFields,"税込の最終合計 円（支払方法別金額・預り金ではない）",batch.total,InputType.TYPE_CLASS_NUMBER);summaryTotal.setTag("summary-total");watch(summaryTotal,()->batch.total=summaryTotal.getText().toString());
+        RadioGroup summaryBasis=new RadioGroup(this);String[] basisLabels={"明細の税込・税抜は未確定","明細は税抜。小計＋税額で照合","明細は税込。内税を二重加算しない"};
+        for(int n=0;n<basisLabels.length;n++){RadioButton r=new RadioButton(this);r.setId(View.generateViewId());r.setText(basisLabels[n]);summaryBasis.addView(r);final ReceiptParser.AmountBasis value=ReceiptParser.AmountBasis.values()[n];if(batch.summaryBasis==value)summaryBasis.check(r.getId());r.setOnClickListener(v->batch.summaryBasis=value);}summaryFields.addView(summaryBasis);
+        CheckBox summaryAck=new CheckBox(this);summaryAck.setText(R.string.ocr_summary_confirmation);summaryAck.setChecked(batch.confirmSummary);summaryAck.setOnCheckedChangeListener((v,on)->batch.confirmSummary=on);summaryFields.addView(summaryAck);
         boolean estimates=false,codes=false;
         for(ReceiptReview.Draft d:batch.rows){estimates|=d.item.quantityState==ReceiptReview.QuantityState.PROVISIONAL_ONE;codes|=!d.item.codeConfirmed;}
         if(estimates){CheckBox one=new CheckBox(this);one.setText("1点と推定した対象行は、原票で1点と確認（複数なら各行を修正）");one.setChecked(batch.acceptOneEstimates);one.setOnCheckedChangeListener((v,on)->batch.acceptOneEstimates=on);content.addView(one);}
@@ -447,8 +456,9 @@ public final class MainActivity extends Activity {
             LinearLayout card=col();card.addView(text(d.item.name,18,true,INK));card.addView(text(d.held==null?d.item.equation():"区分を確認する行の金額 "+d.item.lineAmount+"円",15,true,INK));
             LinearLayout fields=col();
             if(d.held!=null){
-                card.addView(text("集計か商品か要確認。文字だけでは確定せず、商品として戻せます。",13,true,MUTED));
-                RadioGroup choice=new RadioGroup(this);String[] choices={"未確認","小計・集計として除外","商品として含める","後で確認・今回保存しない"};
+                boolean totalCandidate=d.held.source.aggregateKind==ReceiptParser.Kind.TOTAL;
+                card.addView(text(totalCandidate?"合計候補・要確認。支払方法別金額や一日売上ではないか原票で確認。商品にも戻せます。":"集計か商品か要確認。文字だけでは確定せず、商品として戻せます。",13,true,MUTED));
+                RadioGroup choice=new RadioGroup(this);String[] choices={"未確認",totalCandidate?"レシートの最終合計として採用":"小計・集計として除外","商品として含める","後で確認・今回保存しない"};
                 for(int i=0;i<choices.length;i++){RadioButton rb=new RadioButton(this);rb.setId(View.generateViewId());rb.setText(choices[i]);choice.addView(rb);final ReceiptReview.Choice value=ReceiptReview.Choice.values()[i];if(d.choice==value)choice.check(rb.getId());rb.setOnClickListener(v->{d.choice=value;fields.setVisibility(value==ReceiptReview.Choice.ITEM?View.VISIBLE:View.GONE);});}card.addView(choice);
                 fields.setVisibility(d.choice==ReceiptReview.Choice.ITEM?View.VISIBLE:View.GONE);
             }
@@ -495,7 +505,7 @@ public final class MainActivity extends Activity {
             }
             if(list.isEmpty()){toast("保存する商品を選択してください");return;}
             String summary=list.size()+"商品 / 税込計 "+sum+"円";
-            if(model.receipt.total!=null)summary+="\n原票合計 "+model.receipt.total+"円"+(sum!=model.receipt.total?"（不一致：部分保存・端数・値引を確認）":"（一致）");
+            Long receiptTotal=model.aggregate().total;if(receiptTotal!=null)summary+="\n原票合計 "+receiptTotal+"円"+(sum!=receiptTotal?"（不一致：部分保存・端数・値引を確認）":"（一致）");
             if(mismatch)summary+="\n入力単価×数量と印字行金額が異なる商品があります。";
             summary+="\n原票集計はOCR候補として端末内に保存します。画像・原文・管理番号は保存しません。二重登録にも注意してください。";
             new AlertDialog.Builder(this).setTitle("確認済み商品を保存しますか？").setMessage(summary).setNegativeButton("戻る",null).setPositiveButton("確認して保存",(d,w)->{

@@ -16,7 +16,7 @@ public final class ReceiptDiagnostics {
     public enum Relation { LINKED, ATTEMPTED_NOT_LINKED, UNBOUND }
     public enum Route { POSITIONED, TEXT }
     public enum Reason {
-        UNAVAILABLE, FUZZY_SUMMARY_REVIEW, STRUCTURAL_SUMMARY_REVIEW, WEIGHT_DETAIL_REVIEW, UNCLASSIFIED_HELD, STANDALONE_CODE_REVIEW, INPUT_LIMIT_HELD,
+        UNAVAILABLE, TOTAL_CANDIDATE_REVIEW, TOTAL_CONTEXT_MATCHED_REVIEW, FISCAL_VALUE_BOUND, DAILY_REPORT_HELD, FUZZY_SUMMARY_REVIEW, STRUCTURAL_SUMMARY_REVIEW, WEIGHT_DETAIL_REVIEW, UNCLASSIFIED_HELD, STANDALONE_CODE_REVIEW, INPUT_LIMIT_HELD,
         PRE_DATE_HEADER_PRICE_HELD, PRE_DATE_TEXT_PRICE_HELD, MULTIPLE_ADMIN_SIGNALS_HELD,
         ADMIN_LABEL_STRUCTURE, OVERLAPPING_REGIONS_HELD, DATE_VALIDATION, STORE_HEADER,
         PRICE_BASIS_DECLARATION, UNIT_QUANTITY_UNBOUND, UNIT_QUANTITY_AMOUNT_MISMATCH,
@@ -99,7 +99,8 @@ public final class ReceiptDiagnostics {
         }
         for(ReceiptParser.Decision d:receipt.decisions){
             RowAudit a=d.audit;
-            if(!d.candidates.isEmpty()||a==null||a.attemptedCandidate!=null||d.kind!=ReceiptParser.Kind.SUBTOTAL&&a.assembledRow==Token.NONE_OBSERVED&&a.recognizedRegions==Token.NONE_OBSERVED&&(a.summary==null||a.summary.stop==SummaryStop.NOT_SMALL_HEADING||a.summary.stop==SummaryStop.INELIGIBLE||a.summary.stop==SummaryStop.NO_AMOUNT||a.summary.stop==SummaryStop.TOO_FEW_ITEMS))continue;
+            boolean fiscal=d.kind==ReceiptParser.Kind.SUBTOTAL||d.kind==ReceiptParser.Kind.TAX||d.kind==ReceiptParser.Kind.TOTAL||d.reason.equals("TOTAL_CANDIDATE_REVIEW")||d.reason.equals("TOTAL_CONTEXT_MATCHED_REVIEW");
+            if(!d.candidates.isEmpty()||a==null||a.attemptedCandidate!=null||!fiscal&&a.assembledRow==Token.NONE_OBSERVED&&a.recognizedRegions==Token.NONE_OBSERVED&&(a.summary==null||a.summary.stop==SummaryStop.NOT_SMALL_HEADING||a.summary.stop==SummaryStop.INELIGIBLE||a.summary.stop==SummaryStop.NO_AMOUNT||a.summary.stop==SummaryStop.TOO_FEW_ITEMS))continue;
             StringBuilder block=new StringBuilder();row(block,d,Relation.UNBOUND);
             if(++rows>80||out.length()+block.length()>60000)return out.append("REPORT=TRUNCATED\n").toString();out.append(block);
         }

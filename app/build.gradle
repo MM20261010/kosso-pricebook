@@ -9,7 +9,7 @@ def sourceDirty = !providers.exec {
     workingDir rootProject.projectDir
     commandLine 'git', 'status', '--porcelain', '--untracked-files=normal'
 }.standardOutput.asText.get().trim().isEmpty()
-def parserRevision = 'receipt-conditional-review-7'
+def parserRevision = 'receipt-fiscal-review-8'
 
 
 android {
@@ -19,8 +19,8 @@ android {
         applicationId 'org.privateprice.pricebook'
         minSdk 26
         targetSdk 35
-        versionCode 17
-        versionName '0.8.9-debug-conditional-review'
+        versionCode 18
+        versionName '0.8.10-debug-fiscal-review'
         buildConfigField 'String', 'SOURCE_COMMIT', '"' + sourceCommit + '"'
         buildConfigField 'String', 'PARSER_REVISION', '"' + parserRevision + '"'
         buildConfigField 'boolean', 'SOURCE_DIRTY', sourceDirty.toString()
@@ -57,7 +57,7 @@ tasks.register('writeBuildIdentity') {
     doLast {
         def output = identityAssets.get().file('build-info.json').asFile
         output.parentFile.mkdirs()
-        output.text = groovy.json.JsonOutput.toJson([version_code:17, version_name:'0.8.9-debug-conditional-review', source_commit:sourceCommit, working_tree_dirty:sourceDirty, parser_revision:parserRevision]) + '\n'
+        output.text = groovy.json.JsonOutput.toJson([version_code:18, version_name:'0.8.10-debug-fiscal-review', source_commit:sourceCommit, working_tree_dirty:sourceDirty, parser_revision:parserRevision]) + '\n'
     }
 }
 tasks.named('preBuild').configure { dependsOn 'writeBuildIdentity' }

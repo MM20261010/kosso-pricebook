@@ -1,4 +1,5 @@
 <resources>
+    <string name="ocr_summary_confirmation">入力した集計金額・明細の税込税抜を原票で確認して採用する（候補を含む）</string>
     <string name="ocr_review_exception_confirmation">重量・割引・OCR不確実行の購入数量と今回の税込単価を原票で確認した</string>
     <string name="ocr_row_exception_confirmation">この行の重量・割引・OCR不確実な情報と、購入数量・税込単価を個別に確認した</string>
     <string name="ocr_reconciliation_confirmation">OCRの点数・集計に不一致がある場合、原票を見直し、今回確認した明細のみ保存すると確認</string>

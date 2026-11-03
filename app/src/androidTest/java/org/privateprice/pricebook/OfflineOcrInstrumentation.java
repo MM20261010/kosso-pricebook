@@ -101,6 +101,37 @@ public final class OfflineOcrInstrumentation extends Instrumentation {
         if(view.getVisibility()!=android.view.View.VISIBLE)return 0;int count=view instanceof android.widget.EditText?1:0;
         if(view instanceof android.view.ViewGroup){android.view.ViewGroup group=(android.view.ViewGroup)view;for(int i=0;i<group.getChildCount();i++)count+=visibleEditors(group.getChildAt(i));}return count;
     }
+    private int clickVisibleChecks(android.view.View view,String label){
+        if(view.getVisibility()!=android.view.View.VISIBLE)return 0;
+        if(view instanceof android.widget.CheckBox&&((android.widget.CheckBox)view).getText().toString().equals(label)){view.performClick();return 1;}
+        int n=0;if(view instanceof android.view.ViewGroup){android.view.ViewGroup g=(android.view.ViewGroup)view;for(int i=0;i<g.getChildCount();i++)n+=clickVisibleChecks(g.getChildAt(i),label);}return n;
+    }
+    private void fiscalUi(Context isolated)throws Exception{
+        java.util.concurrent.atomic.AtomicReference<Throwable> failure=new java.util.concurrent.atomic.AtomicReference<>();
+        runOnMainSync(()->{MainActivity activity=null;try{
+            android.content.Intent intent=new android.content.Intent(getTargetContext(),MainActivity.class);
+            android.content.pm.ActivityInfo info=getTargetContext().getPackageManager().getActivityInfo(intent.getComponent(),0);
+            activity=(MainActivity)newActivity(MainActivity.class,isolated,null,(android.app.Application)getTargetContext().getApplicationContext(),intent,info,"synthetic fiscal",null,null,null);callActivityOnCreate(activity,null);
+            ReceiptReview model=new ReceiptReview(ReceiptParser.parseDocument(ReceiptFiscalTest.fixture(true,false)));
+            java.lang.reflect.Field f=MainActivity.class.getDeclaredField("reviewModel");f.setAccessible(true);f.set(activity,model);
+            for(String name:new String[]{"reviewText","reviewedText"}){f=MainActivity.class.getDeclaredField(name);f.setAccessible(true);f.set(activity,"synthetic fiscal only");}
+            f=MainActivity.class.getDeclaredField("content");f.setAccessible(true);android.widget.LinearLayout content=(android.widget.LinearLayout)f.get(activity);
+            java.lang.reflect.Method render=MainActivity.class.getDeclaredMethod("showOcrReview");render.setAccessible(true);content.removeAllViews();render.invoke(activity);
+            check(visibleText(content).contains("税込の最終合計：3140円（要確認）")&&visibleText(content).contains("内訳合算・要確認")&&visibleText(content).contains("照合：未確定"));
+            check(visibleEditors(content)==2);
+            findLabel(content,"小計・集計として除外").performClick();findLabel(content,"レシートの最終合計として採用").performClick();
+            check(clickVisibleChecks(content,"この商品は後で確認・今回保存しない")==6);
+            findLabel(content,"集計金額・方式の確認と訂正").performClick();findLabel(content,"入力した集計金額・明細の税込税抜を原票で確認して採用").performClick();
+            findLabel(content,"対象行の数量・金額・税区分・集計/商品区分を原票で確認した").performClick();findLabel(content,"確認をまとめて反映（保存は別）").performClick();
+            check(model.aggregate().total==3140&&model.aggregate().taxAmount==268&&model.items.stream().noneMatch(i->i.ready()||i.selected));
+            content=(android.widget.LinearLayout)f.get(activity);content.removeAllViews();render.invoke(activity);
+            check(visibleText(content).contains("照合：一致")&&visibleText(content).contains("レシート小計：2872円"));
+            model.showQuestions=true;content.removeAllViews();render.invoke(activity);((android.widget.EditText)content.findViewWithTag("summary-total")).setText("3130");
+            try{model.validateSave();throw new AssertionError();}catch(IllegalArgumentException expected){checks++;}
+            findLabel(content,"未反映の入力を破棄して商品一覧へ").performClick();check(model.aggregate().total==3140&&model.batch==null);
+        }catch(Throwable e){failure.set(e);}finally{if(activity!=null)callActivityOnDestroy(activity);}});
+        if(failure.get()!=null)throw new IllegalStateException("Synthetic fiscal UI failed",failure.get());
+    }
     private String visibleText(android.view.View view){
         if(view.getVisibility()!=android.view.View.VISIBLE)return "";StringBuilder text=new StringBuilder();if(view instanceof android.widget.TextView)text.append(((android.widget.TextView)view).getText()).append('\n');
         if(view instanceof android.view.ViewGroup){android.view.ViewGroup group=(android.view.ViewGroup)view;for(int i=0;i<group.getChildCount();i++)text.append(visibleText(group.getChildAt(i)));}return text.toString();
@@ -112,13 +143,14 @@ public final class OfflineOcrInstrumentation extends Instrumentation {
             check(BuildConfig.DEBUG);
             try(InputStream in=getTargetContext().getAssets().open("build-info.json")){
                 JSONObject build=new JSONObject(new String(in.readAllBytes(),StandardCharsets.UTF_8));
-                check(build.getInt("version_code")==17&&BuildConfig.VERSION_CODE==17);
+                check(build.getInt("version_code")==18&&BuildConfig.VERSION_CODE==18);
                 check(build.getString("source_commit").equals(BuildConfig.SOURCE_COMMIT)&&build.getBoolean("working_tree_dirty")==BuildConfig.SOURCE_DIRTY);
             }
             checks+=ReceiptClassificationAuditTest.run();
             checks+=ReceiptPairingTest.run();
             checks+=ReceiptPipelineTest.run();
             checks+=ReceiptConfirmationTest.run();
+            checks+=ReceiptFiscalTest.run();
             PaddleOcr.verifyAssets(getTargetContext().getAssets());checks++;
             JSONArray fixtures;
             try(InputStream in=getContext().getAssets().open("synthetic-manifest.json")){
@@ -155,6 +187,15 @@ public final class OfflineOcrInstrumentation extends Instrumentation {
                         check(receipt.taxBreakdowns.size()==2&&receipt.items.stream().allMatch(c->c.taxRate==null&&c.amountBasis==ReceiptParser.AmountBasis.EXCLUSIVE));
                         check(receipt.reconciliation().contains("金額一致"));
                     }
+                    if(fixture.optBoolean("fiscal_review",false)){
+                        check(receipt.items.size()==6&&receipt.heldItems.size()==2&&receipt.heldItems.stream().anyMatch(h->h.aggregateKind==ReceiptParser.Kind.TOTAL&&h.item.price==3140));
+                        ReceiptParser.TaxBreakdown eight=receipt.taxBreakdowns.stream().filter(b->b.rate==8).findFirst().orElseThrow(),ten=receipt.taxBreakdowns.stream().filter(b->b.rate==10).findFirst().orElseThrow();
+                        check(eight.base==960&&eight.tax==77&&eight.itemCount==5&&!eight.uncertain);
+                        check(ten.base==1912&&ten.tax==191&&ten.itemCount==3&&!ten.uncertain);
+                        check(receipt.taxAmount==268&&receipt.total==null&&receipt.itemSum()==2872);
+                        check(receipt.items.get(1).quantity==2&&receipt.items.get(1).unitPrice==79&&receipt.items.get(3).quantity==2&&receipt.items.get(3).unitPrice==245);
+                        ReceiptReview fiscal=new ReceiptReview(receipt);check(fiscal.items.stream().filter(i->i.quantityState==ReceiptReview.QuantityState.PROVISIONAL_ONE).count()==4&&fiscal.fiscalStatus().contains("税込の最終合計：3140円（要確認）"));
+                    }
                     check(!image.isRecycled()&&fingerprint(image)==before);
                     String tess=ReceiptOcr.recognize(getTargetContext(),image);
                     check(!tess.isEmpty()&&!image.isRecycled());check(fingerprint(image)==before);
@@ -175,6 +216,7 @@ public final class OfflineOcrInstrumentation extends Instrumentation {
             PriceDb db=new PriceDb(isolated);
             try{
                 confirmationUi(isolated);
+                fiscalUi(isolated);
                 PriceDb.Purchase p=new PriceDb.Purchase();p.name="架空牛乳1L";p.key=PriceMath.key(p.name);p.store="架空テスト店";p.date="2026-10-25";p.gross=218;p.quantity=2;p.tax=8;p.unit="";
                 db.addPurchase(p);String backup=db.backupJson();db.importBackup(backup);
                 List<PriceDb.Purchase> rows=db.recentPurchases(10);check(rows.size()==1);check(rows.get(0).gross==218&&rows.get(0).quantity==2&&rows.get(0).date.equals("2026-10-25"));
@@ -220,6 +262,10 @@ public final class OfflineOcrInstrumentation extends Instrumentation {
                 check(weightRestored.size==201.5&&weightRestored.unit.equals("g")&&weightRestored.gross==399&&weightRestored.quantity==1);
                 check(weightRestored.printedUnit==null&&!weightedJson.contains("quantityState")&&!weightedJson.contains("PROVISIONAL_ONE")&&!weightedJson.contains("raw"));
                 db.deletePurchase(weightRestored.id);
+                PriceDb.Purchase taxOnly=new PriceDb.Purchase();taxOnly.name="架空税合算試験";taxOnly.key=PriceMath.key(taxOnly.name);taxOnly.store="架空テスト店";taxOnly.date="2026-11-03";taxOnly.gross=216;taxOnly.quantity=1;taxOnly.taxKnown=false;taxOnly.tax=0;taxOnly.unit="";taxOnly.lineAmount=200L;taxOnly.basis="EXCLUSIVE";
+                ReceiptParser.Receipt derivedTax=ReceiptParser.parseReceipt("税抜表示\n架空税合算試験200\n8%消費税16\n合計216");db.addReceiptPurchases(java.util.Collections.singletonList(taxOnly),derivedTax,taxOnly.store,taxOnly.date);
+                check(db.receiptSummary(taxOnly.receiptId).contains("要確認")&&derivedTax.taxAmountUncertain);
+                String taxJson=db.backupJson();db.importBackup(taxJson);PriceDb.Purchase taxRestored=db.latestForProduct(taxOnly.key).get(0);check(db.receiptSummary(taxRestored.receiptId).contains("要確認")&&taxRestored.gross==216&&taxRestored.quantity==1);db.deletePurchase(taxRestored.id);
                 long receiptId=db.latestForProduct(reviewed.key).get(0).receiptId;db.deletePurchase(db.latestForProduct(reviewed.key).get(0).id);check(db.receiptSummary(receiptId).isEmpty());check(db.allPurchases().size()==1&&db.allPurchases().get(0).gross==86);
             }finally{db.close();isolated.deleteDatabase("private_pricebook.db");}
             result.putString("status","PASS synthetic-only offline OCR and JSON roundtrip");result.putInt("checks",checks);finish(Activity.RESULT_OK,result);
