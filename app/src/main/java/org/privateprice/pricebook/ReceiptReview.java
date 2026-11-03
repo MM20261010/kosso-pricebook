@@ -60,12 +60,19 @@ final class ReceiptReview {
         final Item item;final Held held;
         String quantity,gross,tax="",weight="";boolean defer,exceptionChecked;final EnumSet<Risk> declaredRisks=EnumSet.noneOf(Risk.class);
         Choice choice;
-        Draft(Item item,Held held){this.item=item;this.held=held;declaredRisks.addAll(item.risks);quantity=item.quantity==null?"":item.quantity.toString();gross=item.grossUnit==null?"":item.grossUnit.toString();weight=item.weightGrams==null?"":item.weightGrams.toString();defer=item.deferred;choice=held==null?Choice.ITEM:held.choice;}
+        Draft(Item item,Held held){this.item=item;this.held=held;declaredRisks.addAll(item.risks);quantity=item.quantity==null?"":item.quantity.toString();gross=item.grossUnit==null?"":item.grossUnit.toString();weight=item.weightGrams==null?"":item.weightGrams.toString();defer=item.deferred;exceptionChecked=item.exceptionConfirmed;tax=item.taxRate==null?"":item.taxRate.toString();choice=held==null?Choice.ITEM:held.choice;}
     }
     static final class Batch {
         final List<Draft> rows=new ArrayList<>();
         boolean acknowledged,acceptOneEstimates,acceptCodes,acceptMismatch;
         PriceMode mode=PriceMode.UNSET;String commonTax="";Rounding rounding;
+        boolean hasDataChanges(){
+            if(mode!=PriceMode.UNSET||!commonTax.isBlank()||rounding!=null)return true;
+            for(Draft d:rows){Item i=d.item;if(d.held!=null&&d.choice!=d.held.choice||!d.quantity.trim().equals(i.quantity==null?"":i.quantity.toString())
+                ||!d.gross.trim().equals(i.grossUnit==null?"":i.grossUnit.toString())||!d.tax.trim().equals(i.taxRate==null?"":i.taxRate.toString())
+                ||!d.weight.trim().equals(i.weightGrams==null?"":i.weightGrams.toString())||d.defer!=i.deferred||d.exceptionChecked!=i.exceptionConfirmed||!d.declaredRisks.equals(i.risks))return true;}
+            return false;
+        }
     }
     final ReceiptParser.Receipt receipt;
     final List<Item> items=new ArrayList<>();final List<Held> held=new ArrayList<>();
@@ -103,7 +110,7 @@ final class ReceiptReview {
             ||receipt.amountBasis==ReceiptParser.AmountBasis.EXCLUSIVE&&receipt.taxAmount!=null&&receipt.itemSum()+receipt.taxAmount!=receipt.total);
     }
     Batch batch(){
-        if(batch==null){batch=new Batch();for(Item i:items)if(!i.ready()||i.deferred)batch.rows.add(new Draft(i,null));for(Held h:held)if(h.choice!=Choice.ITEM)batch.rows.add(new Draft(h.item,h));}
+        if(batch==null){batch=new Batch();for(Item i:items)if((!i.ready()||i.deferred)&&held.stream().noneMatch(h->h.item==i))batch.rows.add(new Draft(i,null));for(Held h:held)batch.rows.add(new Draft(h.item,h));}
         return batch;
     }
     void rejectEstimate(Item item){if(item.quantityState==QuantityState.PROVISIONAL_ONE){item.quantity=null;item.quantityState=QuantityState.UNKNOWN;item.estimationRejected=true;item.grossUnit=null;item.selected=false;if(batch!=null)for(Draft d:batch.rows)if(d.item==item)d.quantity="";}}
@@ -123,7 +130,7 @@ final class ReceiptReview {
             if(d.held!=null&&d.choice==Choice.UNRESOLVED)throw new IllegalArgumentException("集計か商品か、または後で確認を選んでください");
             Item n=d.item.copy();n.risks.addAll(d.declaredRisks);
             if(d.held==null&&d.item.ready()){originals.add(d.item);copies.add(n);continue;}
-            if(d.held!=null&&d.choice!=Choice.ITEM){n.selected=false;originals.add(d.item);copies.add(n);continue;}
+            if(d.held!=null&&d.choice!=Choice.ITEM){n.selected=false;n.summaryAccepted=false;originals.add(d.item);copies.add(n);continue;}
             n.summaryAccepted=true;n.deferred=d.defer;
             if(d.defer){n.selected=false;originals.add(d.item);copies.add(n);continue;}
             Integer q=quantity(d.quantity);if(q==null)throw new IllegalArgumentException("数量を入力するか後で確認を選んでください");
@@ -146,16 +153,20 @@ final class ReceiptReview {
             n.grossUnit=gross;n.selected=true;
             if(!n.ready())throw new IllegalArgumentException("未確認の行があります");originals.add(d.item);copies.add(n);
         }
-        List<Item> future=new ArrayList<>();for(Item i:items){int at=originals.indexOf(i);future.add(at<0?i:copies.get(at));}
-        for(int at=0;at<b.rows.size();at++){Draft d=b.rows.get(at);if(d.held!=null&&d.choice==Choice.ITEM&&!future.contains(d.item))future.add(copies.get(at));}
+        List<Item> future=new ArrayList<>();for(Item i:items){int at=originals.indexOf(i);boolean remove=false;for(Draft d:b.rows)if(d.item==i&&d.held!=null&&d.choice!=Choice.ITEM)remove=true;if(!remove)future.add(at<0?i:copies.get(at));}
+        for(int at=0;at<b.rows.size();at++){Draft d=b.rows.get(at);if(d.held!=null&&d.choice==Choice.ITEM&&!items.contains(d.item))future.add(copies.get(at));}
         ReceiptParser.Receipt summary=aggregate(b);
-        if(mismatch(future,summary)&&!b.acceptMismatch)throw new IllegalArgumentException("点数・明細・集計が不一致です。原票を見直すか不一致確認に印を付けてください");
+        boolean keepPriorMismatch=mismatchAccepted&&!b.hasDataChanges();
+        if(mismatch(future,summary)&&!b.acceptMismatch&&!keepPriorMismatch)throw new IllegalArgumentException("点数・明細・集計が不一致です。原票を見直すか不一致確認に印を付けてください");
         for(int at=0;at<originals.size();at++)originals.get(at).adopt(copies.get(at));
-        for(Draft d:b.rows)if(d.held!=null){d.held.choice=d.choice;if(d.choice==Choice.ITEM&&!items.contains(d.item))items.add(d.item);}
-        mismatchAccepted=b.acceptMismatch;batch=null;showQuestions=false;
+        for(Draft d:b.rows)if(d.held!=null){d.held.choice=d.choice;if(d.choice==Choice.ITEM&&!items.contains(d.item))items.add(d.item);else if(d.choice!=Choice.ITEM)items.remove(d.item);}
+        mismatchAccepted=b.acceptMismatch||keepPriorMismatch;batch=null;showQuestions=false;
     }
     private ReceiptParser.Receipt aggregate(Batch proposed){
-        ReceiptParser.Receipt n=new ReceiptParser.Receipt();n.store=store;n.date=date;n.total=receipt.total;n.subtotal=receipt.subtotal;n.taxAmount=receipt.taxAmount;n.amountBasis=receipt.amountBasis;n.includesTax=receipt.includesTax;n.hasDiscount=receipt.hasDiscount||items.stream().anyMatch(i->i.risks.contains(Risk.DISCOUNT));n.totalUncertain=receipt.totalUncertain;n.subtotalUncertain=receipt.subtotalUncertain||mismatchAccepted;n.printedItemCount=receipt.printedItemCount;
+        ReceiptParser.Receipt n=new ReceiptParser.Receipt();n.store=store;n.date=date;n.total=receipt.total;n.subtotal=receipt.subtotal;n.taxAmount=receipt.taxAmount;n.amountBasis=receipt.amountBasis;n.includesTax=receipt.includesTax;n.hasDiscount=receipt.hasDiscount||items.stream().anyMatch(i->i.risks.contains(Risk.DISCOUNT));n.totalUncertain=receipt.totalUncertain;n.subtotalUncertain=receipt.subtotalUncertain||mismatchAccepted||items.stream().anyMatch(i->i.exceptionConfirmed&&(i.risks.contains(Risk.OCR)||i.printedUnit!=null&&i.quantity!=null&&i.printedUnit*i.quantity!=i.lineAmount));n.printedItemCount=receipt.printedItemCount;
+        for(Held h:held)if(h.source.provisionalAggregate){Choice choice=h.choice;if(proposed!=null)for(Draft d:proposed.rows)if(d.held==h)choice=d.choice;
+            if(choice!=Choice.SUBTOTAL){if(n.subtotal!=null&&n.subtotal==h.source.item.price)n.subtotal=null;if(!receipt.countFromExplicitTotal&&h.source.countHint!=null&&h.source.countHint.equals(n.printedItemCount))n.printedItemCount=null;n.subtotalUncertain=true;}
+        }
         for(Held h:held){Choice c=h.choice;if(proposed!=null)for(Draft d:proposed.rows)if(d.held==h)c=d.choice;
             if(c==Choice.SUBTOTAL){if(n.subtotal!=null&&n.subtotal!=h.item.lineAmount)throw new IllegalArgumentException("集計候補の選択が競合しています");n.subtotal=h.item.lineAmount;n.subtotalUncertain=true;if(h.source.countHint!=null)n.printedItemCount=h.source.countHint;}
             if(c==Choice.DEFER||c==Choice.UNRESOLVED)n.subtotalUncertain=true;
@@ -183,7 +194,7 @@ final class ReceiptReview {
     String status(){ReceiptParser.Receipt a=aggregate();long sum=0;int q=0;boolean known=true;for(Item i:items){sum+=i.lineAmount;if(i.quantity==null)known=false;else q+=i.quantity;}
         return "商品 "+items.size()+"種類 / 行金額計 "+sum+"円 / 数量 "+(known?q+"点":"未確定あり")+(items.stream().anyMatch(i->i.quantityState==QuantityState.PROVISIONAL_ONE)?"（推定を含む）":"")
             +(a.subtotal==null?"":" / 小計 "+a.subtotal+"円")+(a.printedItemCount==null?"":" / 印字点数 "+a.printedItemCount+"点")+(mismatch(items,a)?" / 不一致・要確認":"");}
-    void validateSave(){for(Held h:held)if(h.choice==Choice.UNRESOLVED)throw new IllegalArgumentException("集計候補を確認してください");for(Item i:items)if(i.selected&&!i.ready())throw new IllegalArgumentException("推定・未確認の行は保存できません");if(mismatch(items,aggregate())&&!mismatchAccepted)throw new IllegalArgumentException("集計不一致を確認してください");}
+    void validateSave(){if(batch!=null&&batch.hasDataChanges())throw new IllegalArgumentException("未反映の一括入力があります。反映するか破棄してください");for(Held h:held)if(h.choice==Choice.UNRESOLVED)throw new IllegalArgumentException("集計候補を確認してください");for(Item i:items)if(i.selected&&!i.ready())throw new IllegalArgumentException("推定・未確認の行は保存できません");if(mismatch(items,aggregate())&&!mismatchAccepted)throw new IllegalArgumentException("集計不一致を確認してください");}
     static long printedUnit(Item item){
         if(item.quantity==null||item.quantity<1||item.quantity>999)throw new IllegalArgumentException("数量を確認してください");
         if(item.printedUnit!=null){

@@ -64,8 +64,9 @@ public final class ReceiptParser {
 
     /** Recoverable ambiguous aggregate. Never a purchase until the user explicitly restores it. */
     public static final class HeldItem {
-        public final Candidate item; public final Integer countHint;
-        HeldItem(Candidate item,Integer countHint){this.item=item;this.countHint=countHint;}
+        public final Candidate item; public final Integer countHint;public final boolean provisionalAggregate;
+        HeldItem(Candidate item,Integer countHint){this(item,countHint,false);}
+        HeldItem(Candidate item,Integer countHint,boolean proposed){this.item=item;this.countHint=countHint;provisionalAggregate=proposed;}
     }
     public static final class Receipt {
         public final List<Candidate> items=new ArrayList<>();
@@ -78,7 +79,7 @@ public final class ReceiptParser {
         public Long total,subtotal,taxAmount;
         public Integer printedItemCount;
         public AmountBasis amountBasis=AmountBasis.UNKNOWN;
-        public boolean hasDiscount,includesTax,subtotalUncertain,totalUncertain,taxAmountFromBreakdown;
+        public boolean countFromExplicitTotal,hasDiscount,includesTax,subtotalUncertain,totalUncertain,taxAmountFromBreakdown;
         public long itemSum(){long n=0;for(Candidate c:items)n+=c.price;return n;}
         public int knownQuantitySum(){int n=0;for(Candidate c:items)if(c.quantity!=null)n+=c.quantity;return n;}
         public int unknownQuantityCount(){int n=0;for(Candidate c:items)if(c.quantity==null)n++;return n;}
@@ -256,7 +257,10 @@ public final class ReceiptParser {
             case COLUMN_MISMATCH:in.reason="SUMMARY_LIKE_COLUMN_MISMATCH_HELD";break;
             case NO_FOOTER_HELD:in.reason="SUMMARY_LIKE_NO_FOOTER_HELD";break;
             case AMOUNT_MISMATCH_HELD:in.reason="SUMMARY_LIKE_AMOUNT_MISMATCH_HELD";break;
-            case MATCHED:in.reason="SUBTOTAL_COLUMN_COUNT_SUM_FOOTER";in.structural=true;in.structuralCount=points;return true;
+            case MATCHED:
+                in.reason="SUBTOTAL_COLUMN_COUNT_SUM_FOOTER";in.structural=true;in.structuralCount=points;
+                if(r.heldItems.size()<80)r.heldItems.add(new HeldItem(candidate(r,a.name,a.value,in.row==null?normal(in.text):in.row.text,null,null,null,a.markers,a.basis==AmountBasis.UNKNOWN?r.amountBasis:a.basis,false),points,true));
+                return true;
             default:return false;
         }
         in.structural=true;in.structuralCount=points;in.holdBoundary=true;return false;
@@ -380,10 +384,10 @@ public final class ReceiptParser {
         return null;
     }
     static boolean weightSignal(String text){
-        return normal(text).matches("(?is).*(?:量り売|量売|重量|目方|購入重量|100\\s*g\\s*(?:当|あたり|単価)|(?:kg|g)\\s*(?:当たり|あたり|単価)|円\\s*[/／]\\s*(?:100)?\\s*g|[0-9]+(?:[.][0-9]+)?\\s*(?:kg|g)\\s*[×xX]).*");
+        return normal(text).matches("(?is).*(?:量り売|量売|重量|目方|購入重量|[×xX]\\s*[0-9]+(?:[.][0-9]+)?\\s*(?:kg|g)|100\\s*g\\s*(?:当|あたり|単価)|(?:kg|g)\\s*(?:当たり|あたり|単価)|円\\s*[/／]\\s*(?:100)?\\s*g|[0-9]+(?:[.][0-9]+)?\\s*(?:kg|g)\\s*[×xX]).*");
     }
     private static boolean weightDetail(String text){
-        return weightSignal(text)&&normal(text).matches("(?is)^(?:重量|目方|購入重量|100\\s*g|単価|[0-9]+(?:[.][0-9]+)?\\s*(?:kg|g)).*");
+        return weightSignal(text)&&normal(text).matches("(?is)^(?:@|¥|重量|目方|購入重量|100\\s*g|単価|[0-9]+(?:[.][0-9]+)?\\s*(?:kg|g)).*");
     }
     private static Long lastAmount(String s){Amount a=amount(s);return a==null?null:a.value;}
     private static void warn(Receipt r,String s){if(!r.warnings.contains(s))r.warnings.add(s);}
@@ -465,7 +469,7 @@ public final class ReceiptParser {
                     r.heldItems.add(new HeldItem(candidate(r,held.name,held.value,in.row==null?s:in.row.text,null,null,null,held.markers,held.basis==AmountBasis.UNKNOWN?r.amountBasis:held.basis,false),in.structuralCount));
                 if(in.reviewSummary){in.finalKind=Kind.HELD;r.lines.add(new Line(Kind.HELD,source));pending=null;active=-1;continue;}
             }
-            if(in.holdBoundary){afterTotal=true;pending=null;active=-1;in.finalKind=Kind.HELD;r.lines.add(new Line(Kind.HELD,source));continue;}
+            if(in.holdBoundary){pending=null;active=-1;in.finalKind=Kind.HELD;r.lines.add(new Line(Kind.HELD,source));continue;}
             if(k==Kind.MANAGEMENT){in.finalKind=k;in.reason="ADMIN_LABEL_STRUCTURE";waitingCode="";waitingCodeRaw="";pending=null;active=-1;r.lines.add(new Line(k,in.row==null?s:in.row.text));continue;}
             if((k==Kind.SUBTOTAL||k==Kind.TOTAL)&&exactKind(s)==Kind.OTHER&&!summaryEvidence(input,index,r,s))k=Kind.OTHER;
             if(in.row!=null&&in.row.uncertain){in.finalKind=Kind.HELD;in.reason="OVERLAPPING_REGIONS_HELD";pending=null;active=-1;if(k==Kind.SUBTOTAL||k==Kind.TOTAL)afterTotal=true;r.lines.add(new Line(k,s));warn(r,"重なり・行位置が曖昧な領域は商品へ結合しませんでした。");continue;}
@@ -530,6 +534,13 @@ public final class ReceiptParser {
                 }
                 r.lines.add(new Line(attached?Kind.ITEM_DETAIL:Kind.QUANTITY,s));gap=0;continue;
             }
+            if(k==Kind.SUBTOTAL&&exactKind(s)==Kind.OTHER&&!in.structural){
+                Amount fuzzy=amount(s);
+                if(fuzzy!=null&&fuzzy.value!=null&&fuzzy.value>0&&r.heldItems.size()<80){
+                    r.heldItems.add(new HeldItem(candidate(r,fuzzy.name,fuzzy.value,in.row==null?s:in.row.text,null,null,null,fuzzy.markers,fuzzy.basis==AmountBasis.UNKNOWN?r.amountBasis:fuzzy.basis,false),summaryCount(fuzzy.name),true));
+                    in.structural=true;in.reason="FUZZY_SUMMARY_REVIEW";
+                }
+            }
             if(k!=Kind.OTHER){
                 in.finalKind=k;if(!in.structural)in.reason="LABEL_"+k.name();
                 waitingCode="";waitingCodeRaw="";
@@ -540,8 +551,8 @@ public final class ReceiptParser {
                     if(n!=null){if(r.total!=null&&!r.total.equals(n))totalConflict=true;if(!totalConflict)r.total=n;}
                     afterTotal=true;
                 }
-                if(k==Kind.SUBTOTAL){if(in.structuralCount!=null)r.printedItemCount=in.structuralCount;Matcher points=Pattern.compile("(?<![0-9])([0-9]{1,3})(?:点|個)").matcher(compact(s));if(points.find()){Integer v=count(points.group(1));if(r.printedItemCount!=null&&!r.printedItemCount.equals(v)){r.printedItemCount=null;warn(r,"購入点数が競合して未確定です。");}else if(!r.warnings.contains("購入点数が競合して未確定です。"))r.printedItemCount=v;}afterTotal=true;r.subtotalUncertain|=in.structural||exactKind(s)==Kind.OTHER;if(n!=null){if(r.subtotal!=null&&!r.subtotal.equals(n))subtotalConflict=true;if(!subtotalConflict)r.subtotal=n;}}
-                if(k==Kind.COUNT_TOTAL){Matcher q=Pattern.compile("(?<![0-9])([0-9]{1,3})\\s*(?:点|個)?$").matcher(s);if(q.find()){Integer v=count(q.group(1));if(r.printedItemCount!=null&&!r.printedItemCount.equals(v)){r.printedItemCount=null;warn(r,"購入点数が競合して未確定です。");}else if(!r.warnings.contains("購入点数が競合して未確定です。"))r.printedItemCount=v;}}
+                if(k==Kind.SUBTOTAL){if(in.structuralCount!=null)r.printedItemCount=in.structuralCount;Matcher points=Pattern.compile("(?<![0-9])([0-9]{1,3})(?:点|個)").matcher(compact(s));if(points.find()){Integer v=count(points.group(1));if(r.printedItemCount!=null&&!r.printedItemCount.equals(v)){r.printedItemCount=null;warn(r,"購入点数が競合して未確定です。");}else if(!r.warnings.contains("購入点数が競合して未確定です。"))r.printedItemCount=v;}afterTotal=!in.structural;r.subtotalUncertain|=in.structural||exactKind(s)==Kind.OTHER;if(n!=null){if(r.subtotal!=null&&!r.subtotal.equals(n))subtotalConflict=true;if(!subtotalConflict)r.subtotal=n;}}
+                if(k==Kind.COUNT_TOTAL){Matcher q=Pattern.compile("(?<![0-9])([0-9]{1,3})\\s*(?:点|個)?$").matcher(s);if(q.find()){Integer v=count(q.group(1));if(v!=null)r.countFromExplicitTotal=true;if(r.printedItemCount!=null&&!r.printedItemCount.equals(v)){r.printedItemCount=null;warn(r,"購入点数が競合して未確定です。");}else if(!r.warnings.contains("購入点数が競合して未確定です。"))r.printedItemCount=v;}}
                 if(k==Kind.TAX){tax(r,s);if(!r.items.isEmpty()&&n!=null&&!declaration(s)){afterTotal=true;in.reason="MONETARY_TAX_FOOTER_BOUNDARY";}}if(k==Kind.DISCOUNT)r.hasDiscount=true;continue;
             }
             if(afterTotal){in.finalKind=Kind.HELD;in.reason="AFTER_SUMMARY_HELD";r.lines.add(new Line(Kind.OTHER,s));continue;}

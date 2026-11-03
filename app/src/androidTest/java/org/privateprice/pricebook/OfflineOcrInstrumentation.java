@@ -71,8 +71,10 @@ public final class OfflineOcrInstrumentation extends Instrumentation {
                 check(visibleText(content).contains("集計か商品か要確認")&&visibleText(content).contains("1点と推定"));
                 check(visibleText(content).contains("79円 × 2点 ＝ 158円")&&visibleText(content).contains("245円 × 2点 ＝ 490円"));
                 check(!visibleText(content).contains("原文：")&&!visibleText(content).contains("検出座標"));
+                findLabel(content,"個別の税込購入単価・税率（必要時）").performClick();
                 ((android.widget.EditText)content.findViewWithTag("batch-gross-0")).setText("200");
                 content.removeAllViews();render.invoke(activity);
+                findLabel(content,"個別の税込購入単価・税率（必要時）").performClick();
                 check(((android.widget.EditText)content.findViewWithTag("batch-gross-0")).getText().toString().equals("200")&&model.items.get(0).grossUnit==null);
                 ((android.widget.EditText)content.findViewWithTag("batch-gross-0")).setText("");
                 findLabel(content,"1点と推定した対象行は").performClick();
@@ -86,6 +88,11 @@ public final class OfflineOcrInstrumentation extends Instrumentation {
                 check(model.held.get(0).choice==ReceiptReview.Choice.SUBTOTAL&&model.items.size()==6);
                 check(model.items.stream().allMatch(i->i.ready()&&i.selected)&&model.items.stream().mapToInt(i->i.quantity).sum()==8);
                 check(model.aggregate().subtotal==2872&&model.items.get(1).printedUnit==79&&model.items.get(3).printedUnit==245);
+                model.showQuestions=true;content=(android.widget.LinearLayout)field.get(activity);content.removeAllViews();render.invoke(activity);
+                findLabel(content,"後で確認・今回保存しない").performClick();
+                try{model.validateSave();throw new AssertionError();}catch(IllegalArgumentException expected){checks++;}
+                findLabel(content,"未反映の入力を破棄して商品一覧へ").performClick();model.validateSave();
+                check(model.batch==null&&model.held.get(0).choice==ReceiptReview.Choice.SUBTOTAL&&model.items.size()==6);
             }catch(Throwable e){failure.set(e);}finally{if(activity!=null)callActivityOnDestroy(activity);}
         });
         if(failure.get()!=null)throw new IllegalStateException("Synthetic inline confirmation UI failed",failure.get());

@@ -48,6 +48,8 @@ public final class ReceiptConfirmationTest {
         check(m.items.stream().mapToInt(i->i.quantity).sum()==8&&m.items.stream().mapToLong(i->i.lineAmount).sum()==2872,"confirmed count eight and printed line sum 2872");
         check(m.aggregate().subtotal==2872&&m.aggregate().printedItemCount==8&&m.aggregate().subtotalUncertain,"accepted subtotal stays an OCR-derived aggregate with caution");
         m.validateSave();checks++;
+        ReceiptReview.Batch unsaved=m.batch();unsaved.rows.get(0).choice=ReceiptReview.Choice.DEFER;
+        rejects(m::validateSave,"pending review edits must be reflected or discarded before save");m.batch=null;m.validateSave();checks++;
         check(m.items.get(0).printedUnit==null&&m.items.get(1).printedUnit==79,"derived single price never contaminates printed-unit backup field");
         ReceiptReview cancel=new ReceiptReview(fixture("小未読",8));ReceiptReview.Item single=cancel.items.get(0);cancel.rejectEstimate(single);
         check(single.quantity==null&&single.quantityState==ReceiptReview.QuantityState.UNKNOWN&&single.estimationRejected&&!single.selected,"estimate may be rejected to unknown");
@@ -56,12 +58,26 @@ public final class ReceiptConfirmationTest {
         for(String name:new String[]{"小豆","小辻"}){
             ReceiptReview inverse=new ReceiptReview(fixture(name,8));check(inverse.held.size()==1&&inverse.held.get(0).item.name.startsWith(name),"possible real small-name product preserved");
             ReceiptReview.Batch restore=prepared(inverse);
-            for(ReceiptReview.Draft d:restore.rows)if(d.held!=null){d.choice=ReceiptReview.Choice.ITEM;d.quantity="1";d.gross="2872";}
+            for(ReceiptReview.Draft d:restore.rows)if(d.held!=null){d.choice=ReceiptReview.Choice.ITEM;d.quantity="1";d.gross="3101";}
             restore.acceptMismatch=true;inverse.apply(restore);
             check(inverse.items.size()==7&&inverse.items.get(6).name.startsWith(name)&&inverse.items.get(6).ready(),"explicit human item choice restores held original name and price");
+            ReceiptReview.Batch again=inverse.batch();again.acknowledged=true;inverse.apply(again);check(inverse.items.size()==7,"reopening an accepted item does not duplicate it");
+            ReceiptReview.Batch undo=inverse.batch();for(ReceiptReview.Draft d:undo.rows)if(d.held!=null)d.choice=ReceiptReview.Choice.SUBTOTAL;
+            rejects(inverse::validateSave,"unapplied classification changes block saving prior choice");undo.acknowledged=true;inverse.apply(undo);
+            check(inverse.items.size()==6&&inverse.held.get(0).choice==ReceiptReview.Choice.SUBTOTAL,"a restored item can be reclassified as aggregate without a reread");
         }
         ReceiptReview nameOnly=new ReceiptReview(ReceiptParser.parseReceipt("架空パン200"));nameOnly.items.get(0).name="架空パン別名";nameOnly.items.get(0).grossUnit=200L;nameOnly.edited(nameOnly.items.get(0),false);
         check(nameOnly.items.get(0).quantityState==ReceiptReview.QuantityState.PROVISIONAL_ONE&&!nameOnly.items.get(0).ready(),"optional name/price edit alone cannot confirm estimated quantity");
+        for(String small:new String[]{"小辻","小汁"})for(boolean footer:new boolean[]{false,true}){
+            List<OcrDocument.Region> middle=new ArrayList<>();middle.add(b("税込表示",70,20,300));
+            middle.add(b("架空商品A100",70,70,920));middle.add(b("架空商品B200",70,120,920));middle.add(b(small+"4点300",70,170,920));middle.add(b("架空商品C50",70,220,920));
+            if(footer){middle.add(b("税額10",70,270,920));middle.add(b("合計650",70,320,920));middle.add(b("購入点数4点",70,365,920));}
+            ReceiptReview real=new ReceiptReview(ReceiptParser.parseDocument(new OcrDocument("fictional middle product",1200,700,middle)));
+            check(real.items.size()==3&&real.held.size()==1&&(!small.equals("小汁")||ReceiptDiagnostics.anonymousReceipt(real.receipt).contains("FUZZY_SUMMARY_REVIEW")),"holding a possible real subtotal-shaped product must retain following goods and anonymous review reason");
+            ReceiptReview.Batch chosen=prepared(real);chosen.mode=ReceiptReview.PriceMode.GROSS_PRINTED;
+            for(ReceiptReview.Draft d:chosen.rows){d.quantity="1";d.gross=Long.toString(d.item.lineAmount);if(d.held!=null)d.choice=ReceiptReview.Choice.ITEM;}
+            real.apply(chosen);check(real.items.size()==4&&real.items.stream().mapToLong(i->i.lineAmount).sum()==650&&real.aggregate().subtotal==null&&(!footer||real.aggregate().printedItemCount==4),"restoring a real product preserves explicit count and removes that row's provisional aggregate interpretation");
+        }
         ReceiptReview missingTwo=new ReceiptReview(fixture("小未読",9));
         check(missingTwo.items.stream().noneMatch(i->i.quantityState==ReceiptReview.QuantityState.PROVISIONAL_ONE),"printed count suggesting lost two blocks ordinary one proposals");
         ReceiptReview.Batch two=prepared(missingTwo);
@@ -71,7 +87,7 @@ public final class ReceiptConfirmationTest {
         check(invisibleTwo.items.get(0).quantityState==ReceiptReview.QuantityState.PROVISIONAL_ONE,"indistinguishable fully missing OCR count is only a proposal");
         ReceiptReview.Batch correction=prepared(invisibleTwo);correction.mode=ReceiptReview.PriceMode.GROSS_PRINTED;correction.rows.get(0).quantity="2";correction.rows.get(0).gross="100";invisibleTwo.apply(correction);
         check(invisibleTwo.items.get(0).quantity==2&&invisibleTwo.items.get(0).quantityState==ReceiptReview.QuantityState.USER_CONFIRMED,"human correction distinguishes missing two from unprinted one");
-        for(String text:new String[]{"架空牛肉399\n100g単価198円 購入重量201.5g","量り売り架空肉399","架空パン399\n商品値引-20","架空まとめ買い2個で399 399","架空パン399\n@199×2"}){
+        for(String text:new String[]{"架空牛肉399\n100g単価198円 購入重量201.5g","量り売り架空肉399","架空パン399\n商品値引-20","架空まとめ買い2個で399 399","架空パン399\n@199×2","架空肉396\n@198×2kg"}){
             ReceiptReview risky=new ReceiptReview(ReceiptParser.parseReceipt(text));
             check(risky.items.size()==1&&risky.items.get(0).quantityState!=ReceiptReview.QuantityState.PROVISIONAL_ONE,"weight/discount/partial mismatching measurement is not normal one inference");
             ReceiptReview.Batch review=prepared(risky);review.rows.get(0).quantity="1";rejects(()->risky.apply(review),"special uncertainty requires direct paid price and exception confirmation");

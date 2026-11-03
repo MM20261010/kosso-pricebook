@@ -424,6 +424,7 @@ public final class MainActivity extends Activity {
     /** One inline form, retained with the review model. No chain of interrupting dialogs. */
     private void showReviewQuestions(ReceiptReview model){
         ReceiptReview.Batch batch=model.batch();
+        content.addView(button("未反映の入力を破棄して商品一覧へ",()->{model.batch=null;model.showQuestions=false;render();}));
         hint("不確かな項目だけを原票で確認。1点は推定で、確認前は保存できません。名称の変更は商品一覧から任意で行えます。");
         boolean estimates=false,codes=false;
         for(ReceiptReview.Draft d:batch.rows){estimates|=d.item.quantityState==ReceiptReview.QuantityState.PROVISIONAL_ONE;codes|=!d.item.codeConfirmed;}
@@ -438,9 +439,12 @@ public final class MainActivity extends Activity {
         RadioGroup rounding=new RadioGroup(this);String[] roundingLabels={"1点単位で切り捨てと確認","1点単位で四捨五入と確認","1点単位で切り上げと確認"};
         for(int i=0;i<3;i++){RadioButton rb=new RadioButton(this);rb.setId(View.generateViewId());rb.setText(roundingLabels[i]);rounding.addView(rb);final ReceiptReview.Rounding value=ReceiptReview.Rounding.values()[i];if(batch.rounding==value)rounding.check(rb.getId());rb.setOnClickListener(v->batch.rounding=value);}prices.addView(rounding);
         prices.addView(text("税額を合計・税区分単位で丸めるレシートや割引は、自動配分せず税込購入単価を入力してください。",12,false,MUTED));
+        TextView error=text("",14,true,MUTED),bottomError=text("",14,true,MUTED);
+        Runnable apply=()->{try{model.apply(batch);render();}catch(IllegalArgumentException e){String message=e.getMessage()==null?"数量・税込購入単価・確認欄を見直してください":e.getMessage();error.setText(message);bottomError.setText(message);}};
+        content.addView(error);content.addView(button("確認をまとめて反映（保存は別）",apply));
         for(ReceiptReview.Draft d:batch.rows){
             if(d.held==null&&d.item.ready())continue;
-            LinearLayout card=col();card.addView(text(d.item.name,18,true,INK));card.addView(text(d.item.equation(),15,true,INK));
+            LinearLayout card=col();card.addView(text(d.item.name,18,true,INK));card.addView(text(d.held==null?d.item.equation():"区分を確認する行の金額 "+d.item.lineAmount+"円",15,true,INK));
             LinearLayout fields=col();
             if(d.held!=null){
                 card.addView(text("集計か商品か要確認。文字だけでは確定せず、商品として戻せます。",13,true,MUTED));
@@ -453,10 +457,12 @@ public final class MainActivity extends Activity {
             EditText qty=labeled(quantityBlock,"購入数量（容量・重量とは別）",d.quantity,InputType.TYPE_CLASS_NUMBER);qty.setTag("batch-quantity-"+batch.rows.indexOf(d));watch(qty,()->d.quantity=qty.getText().toString());
             if(d.item.quantityState==ReceiptReview.QuantityState.PROVISIONAL_ONE)quantityBlock.addView(button("この行の1点推定を取り消す",()->{model.rejectEstimate(d.item);render();}));
             boolean special=d.declaredRisks.contains(ReceiptReview.Risk.WEIGHT)||d.declaredRisks.contains(ReceiptReview.Risk.DISCOUNT)||d.declaredRisks.contains(ReceiptReview.Risk.OCR);
-            quantityBlock.setVisibility(d.item.quantityState!=ReceiptReview.QuantityState.OCR||special||d.held!=null?View.VISIBLE:View.GONE);fields.addView(quantityBlock);
+            quantityBlock.setVisibility(d.item.quantity==null||special||d.held!=null?View.VISIBLE:View.GONE);
+            fields.addView(button("購入数量の修正・推定の取消し",()->quantityBlock.setVisibility(quantityBlock.getVisibility()==View.VISIBLE?View.GONE:View.VISIBLE)));fields.addView(quantityBlock);
             if(d.item.quantityState==ReceiptReview.QuantityState.OCR)fields.addView(text("OCR数量 "+d.quantity+"点（例外指定・商品一覧で変更可）",13,false,MUTED));
-            EditText gross=labeled(fields,"今回の税込購入単価（1点分・値引後）。空欄は上の設定で算出",d.gross,InputType.TYPE_CLASS_NUMBER);gross.setTag("batch-gross-"+batch.rows.indexOf(d));watch(gross,()->d.gross=gross.getText().toString());
-            EditText tax=labeled(fields,"この行の確認済み税率 %（不明なら空欄）",d.tax,InputType.TYPE_CLASS_NUMBER|InputType.TYPE_NUMBER_FLAG_DECIMAL);watch(tax,()->d.tax=tax.getText().toString());
+            LinearLayout rowPrices=col();Button priceToggle=button(special?"▾ 個別の税込購入単価・税率（必要時）":"▸ 個別の税込購入単価・税率（必要時）",()->rowPrices.setVisibility(rowPrices.getVisibility()==View.VISIBLE?View.GONE:View.VISIBLE));fields.addView(priceToggle);rowPrices.setVisibility(special?View.VISIBLE:View.GONE);fields.addView(rowPrices);
+            EditText gross=labeled(rowPrices,"今回の税込購入単価（1点分・値引後）。空欄は上の設定で算出",d.gross,InputType.TYPE_CLASS_NUMBER);gross.setTag("batch-gross-"+batch.rows.indexOf(d));watch(gross,()->d.gross=gross.getText().toString());
+            EditText tax=labeled(rowPrices,"この行の確認済み税率 %（不明なら空欄）",d.tax,InputType.TYPE_CLASS_NUMBER|InputType.TYPE_NUMBER_FLAG_DECIMAL);watch(tax,()->d.tax=tax.getText().toString());
             LinearLayout weightFields=col();EditText grams=labeled(weightFields,"1点分の購入重量 g（100g単価を購入単価へ入れない）",d.weight,InputType.TYPE_CLASS_NUMBER|InputType.TYPE_NUMBER_FLAG_DECIMAL);watch(grams,()->d.weight=grams.getText().toString());weightFields.setVisibility(d.declaredRisks.contains(ReceiptReview.Risk.WEIGHT)?View.VISIBLE:View.GONE);fields.addView(weightFields);
             CheckBox exception=new CheckBox(this);exception.setText(R.string.ocr_row_exception_confirmation);exception.setChecked(d.exceptionChecked);exception.setOnCheckedChangeListener((v,on)->d.exceptionChecked=on);exception.setVisibility(special?View.VISIBLE:View.GONE);fields.addView(exception);
             LinearLayout types=disclosure("重量・割引・OCR誤認識の例外を指定",fields);
@@ -466,6 +472,7 @@ public final class MainActivity extends Activity {
                 type.setOnCheckedChangeListener((v,on)->{
                     if(on)d.declaredRisks.add(risk);else d.declaredRisks.remove(risk);
                     boolean any=d.declaredRisks.contains(ReceiptReview.Risk.WEIGHT)||d.declaredRisks.contains(ReceiptReview.Risk.DISCOUNT)||d.declaredRisks.contains(ReceiptReview.Risk.OCR);
+                    if(any)rowPrices.setVisibility(View.VISIBLE);
                     if(on&&d.item.quantityState==ReceiptReview.QuantityState.PROVISIONAL_ONE){qty.setText("");issue.setText("例外行・1点推定を使わず数量と税込購入単価を確認");}
                     quantityBlock.setVisibility(d.item.quantityState!=ReceiptReview.QuantityState.OCR||any||d.held!=null?View.VISIBLE:View.GONE);weightFields.setVisibility(d.declaredRisks.contains(ReceiptReview.Risk.WEIGHT)?View.VISIBLE:View.GONE);exception.setVisibility(any?View.VISIBLE:View.GONE);
                 });types.addView(type);
@@ -475,10 +482,7 @@ public final class MainActivity extends Activity {
         }
         CheckBox mismatch=new CheckBox(this);mismatch.setText(R.string.ocr_reconciliation_confirmation);mismatch.setChecked(batch.acceptMismatch);mismatch.setOnCheckedChangeListener((v,on)->batch.acceptMismatch=on);content.addView(mismatch);
         CheckBox ack=new CheckBox(this);ack.setText("対象行の数量・金額・税区分・集計/商品区分を原票で確認した");ack.setChecked(batch.acknowledged);ack.setOnCheckedChangeListener((v,on)->batch.acknowledged=on);content.addView(ack);
-        TextView error=text("",14,true,MUTED);content.addView(error);
-        content.addView(button("確認をまとめて反映（保存は別）",()->{
-            try{model.apply(batch);render();}catch(IllegalArgumentException e){error.setText(e.getMessage()==null?"数量・税込購入単価・確認欄を見直してください":e.getMessage());}
-        }));
+        content.addView(bottomError);content.addView(button("確認をまとめて反映（保存は別）",apply));
     }
     private void saveReviewed(ReceiptReview model){
         try{
