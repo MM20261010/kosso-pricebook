@@ -77,3 +77,24 @@ DBスキーマ2、v1/v2 JSON、モデル・エンジン・依存ライブラリ�
 名称のOCR文字崩れ・未対応配置・実機改善は未解決/未検証。テスト合格だけで実機問題の解決を断定しない。
 
 versionCode19 / `0.8.11-debug-fiscal-stages` / `receipt-fiscal-stages-9`。
+
+## 最終検証・配布（2026-11-04 JST）
+
+- [実装コミット1bd2af6](https://github.com/MM20261010/kosso-pricebook/commit/1bd2af696c31cebca637382a4920ba5e676a5f74)。以後の変更は検証文書だけ。
+- [手動Actions41761801473](https://github.com/MM20261010/kosso-pricebook/actions/runs/41761801473)：debug-apk / android-smokeとも成功。CI回帰948項目、API35 AOSP x86_64 Androidエミュレータ**1,033項目**が合格。ホストとAndroidには共通検査の重複がある。
+- 11枚を両OCRに渡し、同一画素不変を検査。新規2画像はPaddle→座標→解析で6商品、両数量2、4行の暫定1点、総額候補、税率別対象点数/対象額/税額を検査した。連結税率の画像は不確実な候補のまま、列見出し画像は印字値を構造化できた。両画像とも最終合計を自動確定していない。Tesseractの税内訳正答率や実写真精度を示すものではない。
+- 上部の匿名コピーボタン操作後も、未確認商品・集計を無断確定しないことをAndroid上で検査。既存の一括確認、訂正/破棄、数量/例外、未確認保存拒否、SQLite v1→v2とv1/v2 JSON、買い物メモの店舗別単価参照も合格。
+- Lintエラー0・既存警告6（ローカルXML）。GitHubのlintDebugも成功。任意の旧v0.8 APKとのDEX比較はcompare_v08_apk=falseで未実施。現行APKのDEX分類プローブは成功した。
+- 従来「複数率なので拒否」としていたテスト入力のうち、正当な書式は新仕様の複数率試験へ移し、拒否試験には税率の文字崩れを用いた。壊れた数字の受け入れに条件を緩めたものではない。
+
+[実機用APK Artifact](https://github.com/MM20261010/kosso-pricebook/actions/runs/41761801473/artifacts/13291093191) / `kosso-pricebook-debug-v0.8.11`。
+期限 **2026-11-18 11:50:14 JST**。GitHubにログインし、ZIPをダウンロード・展開して`app-debug.apk`を開く。synthetic-tests Artifactは開発用で、本人のインストール対象ではない。
+
+- 再取得APKの埋込ソースは`1bd2af696c31cebca637382a4920ba5e676a5f74`、working_tree_dirty=false、versionCode19。Android上のBuildConfigと埋込情報の照合も合格。
+- APK **72,660,419 byte**。SHA-256 `577095238a0c10fc059229ba2b0f5a1c234662d0abfbf39e30237945915f1cd8`。再取得ファイルとCIログのハッシュが一致した。
+- 署名v2検証成功。証明書SHA-256 `4791afd740d80f0d69326ab21a0d9555071fbde4ec00e9646557e18d3ca157f7`。
+- 再取得APKでManifest権限集合（INTERNETなし）、バックアップ/cleartext無効、英日Tesseractと5つのPaddle資産・固定変換元のハッシュ、ライセンス同梱、3 ABI、NX/RELRO・W+Xなし・ネットワーク/プロセス起動API輸入なし、16K ELF/ZIP配置を再検証した。架空試験画像の通常APKへの非混入も確認。
+- 最終DEXに分割集計・連結税率候補の実装を確認。匿名コピー処理に私有のOCR文字列・名称・金額・日付・座標フィールド参照がなく、固定enum診断を含むことも確認した。
+
+旧v0.8.10とはデバッグ署名が異なる。**既存履歴がある場合だけ、旧版削除前に端末内JSONへ退避**し、新APK導入後に復元する。履歴がない場合は退避不要。Androidが求める場合はファイルアプリ等の「この提供元のアプリを許可」を設定する。
+まず同じ写真を1回読み、保存せず上部集計と商品・数量を確認する。不足する場合は匿名診断ボタンを1回使用し、固定コードだけで次の原因調査につなぐ。本人実機の総額・税内訳の読取改善、修正回数削減、名称精度は引き続き未検証。main非変更・Draft PR #10維持。
