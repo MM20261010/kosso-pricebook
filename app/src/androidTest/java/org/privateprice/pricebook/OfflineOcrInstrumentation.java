@@ -119,6 +119,8 @@ public final class OfflineOcrInstrumentation extends Instrumentation {
             java.lang.reflect.Method render=MainActivity.class.getDeclaredMethod("showOcrReview");render.setAccessible(true);content.removeAllViews();render.invoke(activity);
             check(visibleText(content).contains("税込の最終合計：3140円（要確認）")&&visibleText(content).contains("内訳合算・要確認")&&visibleText(content).contains("照合：未確定"));
             check(visibleEditors(content)==2);
+            check(findLabel(content,"未取得の集計を匿名診断コピー").performClick());
+            check(model.aggregate().total==null&&model.aggregate().taxAmountUncertain&&model.items.stream().noneMatch(i->i.selected||i.ready()));
             findLabel(content,"小計・集計として除外").performClick();findLabel(content,"レシートの最終合計として採用").performClick();
             check(clickVisibleChecks(content,"この商品は後で確認・今回保存しない")==6);
             findLabel(content,"集計金額・方式の確認と訂正").performClick();findLabel(content,"入力した集計金額・明細の税込税抜を原票で確認して採用").performClick();
@@ -143,7 +145,7 @@ public final class OfflineOcrInstrumentation extends Instrumentation {
             check(BuildConfig.DEBUG);
             try(InputStream in=getTargetContext().getAssets().open("build-info.json")){
                 JSONObject build=new JSONObject(new String(in.readAllBytes(),StandardCharsets.UTF_8));
-                check(build.getInt("version_code")==18&&BuildConfig.VERSION_CODE==18);
+                check(build.getInt("version_code")==19&&BuildConfig.VERSION_CODE==19);
                 check(build.getString("source_commit").equals(BuildConfig.SOURCE_COMMIT)&&build.getBoolean("working_tree_dirty")==BuildConfig.SOURCE_DIRTY);
             }
             checks+=ReceiptClassificationAuditTest.run();
@@ -151,6 +153,7 @@ public final class OfflineOcrInstrumentation extends Instrumentation {
             checks+=ReceiptPipelineTest.run();
             checks+=ReceiptConfirmationTest.run();
             checks+=ReceiptFiscalTest.run();
+            checks+=ReceiptFiscalStagesTest.run();
             PaddleOcr.verifyAssets(getTargetContext().getAssets());checks++;
             JSONArray fixtures;
             try(InputStream in=getContext().getAssets().open("synthetic-manifest.json")){
@@ -195,6 +198,17 @@ public final class OfflineOcrInstrumentation extends Instrumentation {
                         check(receipt.taxAmount==268&&receipt.total==null&&receipt.itemSum()==2872);
                         check(receipt.items.get(1).quantity==2&&receipt.items.get(1).unitPrice==79&&receipt.items.get(3).quantity==2&&receipt.items.get(3).unitPrice==245);
                         ReceiptReview fiscal=new ReceiptReview(receipt);check(fiscal.items.stream().filter(i->i.quantityState==ReceiptReview.QuantityState.PROVISIONAL_ONE).count()==4&&fiscal.fiscalStatus().contains("税込の最終合計：3140円（要確認）"));
+                    }
+                    if(fixture.optBoolean("fiscal_stages",false)){
+                        boolean joined=file.equals("v0811-split-fiscal.png");
+                        check(receipt.items.size()==6&&receipt.heldItems.stream().anyMatch(h->h.aggregateKind==ReceiptParser.Kind.TOTAL&&h.item.price==3140));
+                        ReceiptParser.TaxBreakdown eight=receipt.taxBreakdowns.stream().filter(b->b.rate==8).findFirst().orElseThrow(),ten=receipt.taxBreakdowns.stream().filter(b->b.rate==10).findFirst().orElseThrow();
+                        check(eight.base==960&&eight.tax==77&&eight.itemCount==5&&eight.uncertain==joined);
+                        check(ten.base==1912&&ten.tax==191&&ten.itemCount==3&&ten.uncertain==joined);
+                        check(receipt.taxAmount==268&&receipt.taxAmountFromBreakdown&&receipt.taxAmountUncertain&&receipt.taxDetailsPending==joined&&receipt.total==null&&receipt.itemSum()==2872);
+                        check(receipt.items.get(1).quantity==2&&receipt.items.get(1).unitPrice==79&&receipt.items.get(3).quantity==2&&receipt.items.get(3).unitPrice==245);
+                        ReceiptReview fiscal=new ReceiptReview(receipt);
+                        check(fiscal.items.stream().filter(i->i.quantityState==ReceiptReview.QuantityState.PROVISIONAL_ONE).count()==4&&fiscal.fiscalStatus().contains("税込の最終合計：3140円（要確認）")&&(!joined||receipt.decisions.stream().anyMatch(d->d.audit.fiscal.tax==ReceiptDiagnostics.TaxStop.JOINED_RATE_PROPOSAL)));
                     }
                     check(!image.isRecycled()&&fingerprint(image)==before);
                     String tess=ReceiptOcr.recognize(getTargetContext(),image);

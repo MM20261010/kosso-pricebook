@@ -119,7 +119,7 @@ public final class ReceiptFiscalTest {
             Receipt r=text("税抜表示\n架空茶200\n小計200\n"+bad+"\n合計216");
             check(r.taxConflict||r.taxBreakdowns.stream().anyMatch(b->b.uncertain),"conflicting tax observations never become trusted totals");
         }
-        for(String bad:new String[]{"8%1912191","8%対象額1,46O 税77","7%対象額200税14","8%対象額-200税-16","8%対象額200税16 10%対象額100税10","標準税率対象額200税16"}){
+        for(String bad:new String[]{"8%1912191","8%対象額1,46O 税77","7%対象額200税14","8%対象額-200税-16","8%対象額200税16 1O%対象額100税10","標準税率対象額200税16"}){
             Receipt r=text("税抜表示\n架空茶200\n小計200\n"+bad);
             check(r.total==null&&r.taxAmount==null&&r.items.size()==1,"broken numbers, unsupported/missing rate and mixed-rate rows cannot yield a final amount");
         }

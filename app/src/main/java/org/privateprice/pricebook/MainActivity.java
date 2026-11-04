@@ -297,6 +297,7 @@ public final class MainActivity extends Activity {
         watch(date,()->model.date=date.getText().toString().trim());
         content.addView(text(model.status(),13,true,INK));
         content.addView(text(model.fiscalStatus(),15,true,INK));
+        if(BuildConfig.DEBUG)content.addView(button("未取得の集計を匿名診断コピー",()->copyAnonymousAudit(receipt,null)));
         content.addView(button(model.showQuestions?"商品一覧・詳細へ":"要確認の項目だけまとめて確認",()->{model.showQuestions=!model.showQuestions;render();}));
         if(model.showQuestions){showReviewQuestions(model);return;}
         LinearLayout actions=row();

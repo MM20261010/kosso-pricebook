@@ -8,7 +8,7 @@ import java.util.List;
 final class ReceiptLayout {
     static final class Row {
         String text=""; double left,right,top,bottom;
-        boolean uncertain;
+        boolean uncertain,overlap,competing,multipleAmounts;
         final List<Part> parts=new ArrayList<>();
         double height(){return bottom-top;}
         double center(){return (top+bottom)/2;}
@@ -44,19 +44,19 @@ final class ReceiptLayout {
                 double overlap=Math.min(p.bottom,row.bottom)-Math.max(p.top,row.top);
                 if(overlap<.25*small||Math.abs(p.center()-row.center())>.75*large||Math.abs(p.bottom-row.bottom)>.85*large)continue;
                 // Overlapping regions are not silently concatenated into one product.
-                if(row.parts.stream().anyMatch(q->Math.min(q.right,p.right)-Math.max(q.left,p.left)>.3*Math.min(q.right-q.left,p.right-p.left))){row.uncertain=true;overlapConflict=true;continue;}
+                if(row.parts.stream().anyMatch(q->Math.min(q.right,p.right)-Math.max(q.left,p.left)>.3*Math.min(q.right-q.left,p.right-p.left))){row.uncertain=true;row.overlap=true;overlapConflict=true;continue;}
                 matches++;compatible.add(row);double d=Math.abs(p.center()-row.center())/Math.max(1,small);
                 if(d<distance){distance=d;best=row;}
             }
-            if(matches>1){Row row=new Row();row.uncertain=true;row.add(p);rows.add(row);for(Row other:compatible)other.uncertain=true;}
-            else if(best!=null)best.add(p);else{Row row=new Row();row.uncertain=overlapConflict;row.add(p);rows.add(row);}
+            if(matches>1){Row row=new Row();row.uncertain=true;row.competing=true;row.add(p);rows.add(row);for(Row other:compatible){other.uncertain=true;other.competing=true;}}
+            else if(best!=null)best.add(p);else{Row row=new Row();row.uncertain=overlapConflict;row.overlap=overlapConflict;row.add(p);rows.add(row);}
         }
         rows.sort(Comparator.comparingDouble(Row::center).thenComparingDouble(r->r.left));
         for(Row row:rows){
             row.parts.sort(Comparator.comparingDouble(p->p.left));StringBuilder text=new StringBuilder();
             for(Part p:row.parts){if(text.length()>0)text.append(' ');text.append(p.text.replace('\n',' '));}
             row.text=text.toString();
-            if(row.parts.stream().filter(p->!ReceiptParser.explicitMeasureText(p.text)&&p.text.matches(".*[\\p{L}].*\\s+[¥]?[0-9][0-9,]*\\s*[CVcv*※軽外内非]*$")).count()>1)row.uncertain=true;
+            if(row.parts.stream().filter(p->!ReceiptParser.explicitMeasureText(p.text)&&p.text.matches(".*[\\p{L}].*\\s+[¥]?[0-9][0-9,]*\\s*[CVcv*※軽外内非]*$")).count()>1){row.uncertain=true;row.multipleAmounts=true;}
         }
         return rows;
     }
