@@ -25,6 +25,7 @@ public final class ReceiptDiagnostics {
     public enum Rates { NONE, SINGLE_SUPPORTED, MULTIPLE_SUPPORTED, INHERITED_SUPPORTED, JOINED_PROPOSAL, UNSUPPORTED_OR_JOINED }
     public enum FiscalResult { NOT_OBTAINED, OBSERVED, CANDIDATE, CONFLICT, NEEDS_REVIEW }
     public enum Values { NONE, BASE_ONLY, TAX_ONLY, BASE_AND_TAX }
+    public enum Recovery { ORIGINAL, JOINED_COLUMNS_PROPOSED, HEADER_VIEW, RATE_CELLS_VIEW, TAX_FIELDS_PROPOSED, TOTAL_FIELDS_PROPOSED, ALTERNATIVE_TOTALS, UNPROVEN_VIEW, CONFLICTING_VIEW, NO_UNIQUE_BINDING }
     /** Only bounded enum states; no raw values or text can enter this record. */
     public static final class FiscalAudit {
         MoneyToken money=MoneyToken.NOT_EVALUATED;
@@ -36,15 +37,16 @@ public final class ReceiptDiagnostics {
         FiscalRole role=FiscalRole.NONE;
         Rates rates=Rates.NONE;
         Values values=Values.NONE;
+        Recovery recovery=Recovery.ORIGINAL;
         Gate grammar=Gate.NOT_APPLICABLE,boundary=Gate.NOT_APPLICABLE,column=Gate.NOT_APPLICABLE,sum=Gate.NOT_APPLICABLE,payment=Gate.NOT_APPLICABLE;
         ReceiptParser.AmountBasis basis=ReceiptParser.AmountBasis.UNKNOWN;
-        FiscalAudit copy(){FiscalAudit n=new FiscalAudit();n.money=money;n.heading=heading;n.binding=binding;n.geometry=geometry;n.total=total;n.tax=tax;n.role=role;n.rates=rates;n.values=values;n.grammar=grammar;n.boundary=boundary;n.column=column;n.sum=sum;n.payment=payment;n.basis=basis;return n;}
-        String localStatus(){return "集計段階：見出し="+heading+" / 金額="+money+" / 分割="+binding+" / 位置="+geometry+"\n合計停止="+total+" / 文脈="+boundary+" / 金額列="+column+" / 合算="+sum+" / 決済="+payment+"\n税停止="+tax+" / 文法="+grammar+" / 税率表記="+rates+" / 役割="+role+" / 方式="+basis+" / 内訳保持="+values;}
+        FiscalAudit copy(){FiscalAudit n=new FiscalAudit();n.money=money;n.heading=heading;n.binding=binding;n.geometry=geometry;n.total=total;n.tax=tax;n.role=role;n.rates=rates;n.values=values;n.recovery=recovery;n.grammar=grammar;n.boundary=boundary;n.column=column;n.sum=sum;n.payment=payment;n.basis=basis;return n;}
+        String localStatus(){return "集計段階：見出し="+heading+" / 金額="+money+" / 分割="+binding+" / 位置="+geometry+"\n合計停止="+total+" / 文脈="+boundary+" / 金額列="+column+" / 合算="+sum+" / 決済="+payment+"\n税停止="+tax+" / 文法="+grammar+" / 税率表記="+rates+" / 役割="+role+" / 方式="+basis+" / 内訳保持="+values+" / 再構成="+recovery;}
     }
     static Geometry geometry(ReceiptLayout.Row r){if(r==null)return Geometry.TEXT_ONLY;int n=(r.overlap?1:0)+(r.competing?1:0)+(r.multipleAmounts?1:0);return n>1?Geometry.MULTIPLE_RISKS:r.overlap?Geometry.OVERLAP:r.competing?Geometry.COMPETING_ROWS:r.multipleAmounts?Geometry.MULTIPLE_TEXT_AMOUNTS:r.uncertain?Geometry.UNSPECIFIED:Geometry.CLEAR;}
     static Gate result(boolean b){return b?Gate.PASS:Gate.FAIL;}
     public enum Reason {
-        UNAVAILABLE, TOTAL_STRUCTURE_REVIEW, TOTAL_LAYOUT_REVIEW, TOTAL_CANDIDATE_REVIEW, TOTAL_CONTEXT_MATCHED_REVIEW, FISCAL_VALUE_BOUND, DAILY_REPORT_HELD, FUZZY_SUMMARY_REVIEW, STRUCTURAL_SUMMARY_REVIEW, WEIGHT_DETAIL_REVIEW, UNCLASSIFIED_HELD, STANDALONE_CODE_REVIEW, INPUT_LIMIT_HELD,
+        UNAVAILABLE, FISCAL_RECONSTRUCTED_REVIEW, TOTAL_STRUCTURE_REVIEW, TOTAL_LAYOUT_REVIEW, TOTAL_CANDIDATE_REVIEW, TOTAL_CONTEXT_MATCHED_REVIEW, FISCAL_VALUE_BOUND, DAILY_REPORT_HELD, FUZZY_SUMMARY_REVIEW, STRUCTURAL_SUMMARY_REVIEW, WEIGHT_DETAIL_REVIEW, UNCLASSIFIED_HELD, STANDALONE_CODE_REVIEW, INPUT_LIMIT_HELD,
         PRE_DATE_HEADER_PRICE_HELD, PRE_DATE_TEXT_PRICE_HELD, MULTIPLE_ADMIN_SIGNALS_HELD,
         ADMIN_LABEL_STRUCTURE, OVERLAPPING_REGIONS_HELD, DATE_VALIDATION, STORE_HEADER,
         PRICE_BASIS_DECLARATION, UNIT_QUANTITY_UNBOUND, UNIT_QUANTITY_AMOUNT_MISMATCH,
@@ -102,7 +104,7 @@ public final class ReceiptDiagnostics {
         FiscalAudit f=a.fiscal;
         field(out,"FISCAL_HEADING",f.heading);field(out,"FISCAL_AMOUNT",f.money);field(out,"FISCAL_BINDING",f.binding);field(out,"FISCAL_GEOMETRY",f.geometry);
         field(out,"TOTAL_STOP",f.total);field(out,"FISCAL_BOUNDARY",f.boundary);field(out,"FISCAL_COLUMN",f.column);field(out,"FISCAL_SUM",f.sum);field(out,"FISCAL_PAYMENT",f.payment);
-        field(out,"TAX_STOP",f.tax);field(out,"TAX_GRAMMAR",f.grammar);field(out,"TAX_RATES",f.rates);field(out,"TAX_ROLE",f.role);field(out,"TAX_BASIS",f.basis);field(out,"TAX_VALUES",f.values);
+        field(out,"TAX_STOP",f.tax);field(out,"TAX_GRAMMAR",f.grammar);field(out,"TAX_RATES",f.rates);field(out,"TAX_ROLE",f.role);field(out,"TAX_BASIS",f.basis);field(out,"TAX_VALUES",f.values);field(out,"FISCAL_RECOVERY",f.recovery);
         Summary s=a.summary;if(s==null)return;
         field(out,"SUMMARY_STOP",s.stop);field(out,"KNOWN_STEM",s.knownStem);field(out,"STRONG_HEADING",s.strongHeading);field(out,"PLAUSIBLE_HEADING",s.plausibleHeading);
         field(out,"COUNT_HINT",s.countHint);field(out,"COUNT_CHECK",s.count);field(out,"AMOUNT_COLUMN",s.amountColumn);field(out,"SUM_MATCH",s.sumMatches);field(out,"FUTURE_FOOTER",s.futureFooter);
@@ -145,5 +147,25 @@ public final class ReceiptDiagnostics {
     public static List<ReceiptParser.Decision> attemptsForCandidate(ReceiptParser.Receipt receipt,int number){
         java.util.ArrayList<ReceiptParser.Decision> out=new java.util.ArrayList<>();
         for(ReceiptParser.Decision d:receipt.decisions)if(relates(d,number)&&!d.candidates.contains(number))out.add(d);return out;
+    }
+    /** Fiscal-only, de-duplicated enum states. No row IDs, quantities or private scalar values. */
+    public static String anonymousFiscal(ReceiptParser.Receipt receipt){
+        if(receipt==null)return "";
+        StringBuilder out=header(receipt);out.append("SCOPE=FISCAL_ONLY\n");
+        java.util.LinkedHashSet<String> blocks=new java.util.LinkedHashSet<>();
+        int lastProduct=0;for(ReceiptParser.Decision d:receipt.decisions)if(!d.candidates.isEmpty())lastProduct=Math.max(lastProduct,d.row);
+        // Recovery and fiscal decisions first; unresolved footer rows follow. Product details stay local.
+        for(int pass=0;pass<2;pass++)for(ReceiptParser.Decision d:receipt.decisions){
+            if(d.audit==null||!d.candidates.isEmpty()||d.row<=lastProduct)continue;FiscalAudit f=d.audit.fiscal;
+            boolean explicit=d.kind==ReceiptParser.Kind.TAX||d.kind==ReceiptParser.Kind.TOTAL||d.kind==ReceiptParser.Kind.SUBTOTAL||f.recovery!=Recovery.ORIGINAL||f.total!=TotalStop.NOT_A_TOTAL&&f.total!=TotalStop.NOT_EVALUATED;
+            boolean held=d.kind==ReceiptParser.Kind.HELD&&(d.reason.equals("AFTER_SUMMARY_HELD")||d.reason.equals("OVERLAPPING_REGIONS_HELD")||d.reason.equals("STRUCTURAL_SUMMARY_REVIEW")||d.reason.equals("FUZZY_SUMMARY_REVIEW"));
+            if(pass==0?!explicit:explicit||!held)continue;
+            StringBuilder b=new StringBuilder("[ROW]\n");field(b,"KIND",d.kind);field(b,"REASON",reason(d.reason));
+            field(b,"FISCAL_GEOMETRY",f.geometry);field(b,"FISCAL_BINDING",f.binding);field(b,"FISCAL_HEADING",f.heading);field(b,"FISCAL_AMOUNT",f.money);field(b,"FISCAL_RECOVERY",f.recovery);field(b,"TOTAL_STOP",f.total);
+            field(b,"TAX_STOP",f.tax);field(b,"TAX_GRAMMAR",f.grammar);field(b,"TAX_RATES",f.rates);field(b,"TAX_ROLE",f.role);field(b,"TAX_BASIS",f.basis);field(b,"TAX_VALUES",f.values);
+            if(blocks.contains(b.toString()))continue;
+            if(blocks.size()==12||out.length()+b.length()>7000)return out.append("REPORT=TRUNCATED\n").toString();blocks.add(b.toString());out.append(b);
+        }
+        return out.toString();
     }
 }

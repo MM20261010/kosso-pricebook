@@ -24,6 +24,7 @@ final class ReceiptFiscal {
     private boolean totalTaxConflict,headerOpen,sectionUncertain;private int headerRows;
     private Long joinedTaxCandidate;
     ReceiptFiscal(Receipt receipt){this.receipt=receipt;}
+    String columnsForRecovery(){return columns;}
     static String clean(String s){return ReceiptParser.normal(s).replace('稅','税').replaceAll("(?<=[\\p{IsHan}]) +(?=[\\p{IsHan}])","");}
     private static String compact(String s){return clean(s).replace(" ","");}
     private static Long money(String s){try{long v=Long.parseLong(s.replace(",",""));return v>=0&&v<=1_000_000?v:null;}catch(RuntimeException e){return null;}}
@@ -61,9 +62,9 @@ final class ReceiptFiscal {
     private TaxBreakdown band(int rate){for(TaxBreakdown b:receipt.taxBreakdowns)if(b.rate==rate)return b;TaxBreakdown b=new TaxBreakdown(rate);receipt.taxBreakdowns.add(b);return b;}
     private static AmountBasis basis(String s){boolean net=s.contains("税抜"),gross=s.contains("税込");return net==gross?AmountBasis.UNKNOWN:net?AmountBasis.EXCLUSIVE:AmountBasis.INCLUSIVE;}
     private static Long labeled(String body,String labels){Matcher m=Pattern.compile("(?:"+labels+")\\s*[:：]?\\s*[¥]?\\s*("+MONEY+")(?![0-9,.%点個])").matcher(body);return m.find()?money(m.group(1)):null;}
-    private static int baseColumn(String columns){Matcher m=Pattern.compile("対象(?:金額|額)|本体(?:価格)?|対象(?!購入点数|点数)").matcher(columns);return m.find()?m.start():-1;}
+    static int baseColumn(String columns){Matcher m=Pattern.compile("対象(?:金額|額)|本体(?:価格)?|対象(?!購入点数|点数)").matcher(columns);return m.find()?m.start():-1;}
     private static List<Long> numbers(String body){List<Long> out=new ArrayList<>();Matcher m=NUMBER.matcher(body);while(m.find()){Long v=money(m.group(1));if(v==null)return List.of();out.add(v);}return out;}
-    private static boolean compatible(long base,long tax,int rate,AmountBasis basis){
+    static boolean compatible(long base,long tax,int rate,AmountBasis basis){
         if(basis==AmountBasis.UNKNOWN)return false;
         long numerator=base*rate,denominator=basis==AmountBasis.INCLUSIVE?100+rate:100;
         return tax==numerator/denominator||tax==(numerator+denominator-1)/denominator;

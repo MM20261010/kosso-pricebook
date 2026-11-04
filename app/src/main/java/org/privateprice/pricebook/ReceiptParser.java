@@ -631,6 +631,7 @@ public final class ReceiptParser {
         if(storeConflict){r.store="";warn(r,"店名候補が複数あり未確定です。");}
         if(totalConflict){r.total=null;r.totalUncertain=true;warn(r,"異なる総額があり未確定です。");}if(subtotalConflict){r.subtotal=null;warn(r,"異なる小計があり未確定です。");}
         if(r.subtotalUncertain||r.totalUncertain)warn(r,"小計・合計の見出しにOCR表記揺れがあります。元の画像で確認してください。");
+        ReceiptFiscalRecovery.apply(r,input,imageWidth,dailyReport);
         fiscal.finish();
         if(dailyReport){r.total=null;r.totalCandidates.clear();r.totalUncertain=true;}
         if(r.total!=null){

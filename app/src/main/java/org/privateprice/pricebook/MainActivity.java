@@ -297,7 +297,7 @@ public final class MainActivity extends Activity {
         watch(date,()->model.date=date.getText().toString().trim());
         content.addView(text(model.status(),13,true,INK));
         content.addView(text(model.fiscalStatus(),15,true,INK));
-        if(BuildConfig.DEBUG)content.addView(button("未取得の集計を匿名診断コピー",()->copyAnonymousAudit(receipt,null)));
+        if(BuildConfig.DEBUG)content.addView(button("未取得の集計を匿名診断コピー",()->copyAnonymousFiscalAudit(receipt)));
         content.addView(button(model.showQuestions?"商品一覧・詳細へ":"要確認の項目だけまとめて確認",()->{model.showQuestions=!model.showQuestions;render();}));
         if(model.showQuestions){showReviewQuestions(model);return;}
         LinearLayout actions=row();
@@ -343,8 +343,9 @@ public final class MainActivity extends Activity {
         privateText.addView(text("原文："+ReceiptParser.visibleText(decision.raw)+"\n正規化："+ReceiptParser.visibleText(decision.normalized),13,false,MUTED));
     }
     private void copyAnonymousCandidateAudit(ReceiptParser.Receipt receipt,int number){copyAnonymousAudit(receipt,number);}
-    private void copyAnonymousAudit(ReceiptParser.Receipt receipt,Integer number){
-        String report=number==null?ReceiptDiagnostics.anonymousReceipt(receipt):ReceiptDiagnostics.anonymousCandidate(receipt,number);
+    private void copyAnonymousFiscalAudit(ReceiptParser.Receipt receipt){copyAuditReport(ReceiptDiagnostics.anonymousFiscal(receipt));}
+    private void copyAnonymousAudit(ReceiptParser.Receipt receipt,Integer number){copyAuditReport(number==null?ReceiptDiagnostics.anonymousReceipt(receipt):ReceiptDiagnostics.anonymousCandidate(receipt,number));}
+    private void copyAuditReport(String report){
         if(report.isEmpty()){toast("診断情報がありません");return;}
         android.content.ClipboardManager clipboard=(android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
         if(clipboard==null){toast("クリップボードが利用できません");return;}

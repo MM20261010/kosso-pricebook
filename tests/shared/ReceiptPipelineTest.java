@@ -11,8 +11,9 @@ public final class ReceiptPipelineTest {
     static void noData(String report){
         check(!report.matches("(?s).*[0-9]{2,}.*")&&!report.contains("架空")&&!report.contains("SECRET")&&!report.contains("2026")&&!report.contains("candidates="),"copy contains no variable digits, identity, raw or free-form data");
         Set<String> allowed=new HashSet<>(List.of("SCHEMA=OCR_PIPELINE_V1","[CANDIDATE]","[ROW]","REPORT=TRUNCATED"));
-        allowed.add("FISCAL_SCHEMA=FISCAL_STAGES_V1");
+        allowed.add("FISCAL_SCHEMA=FISCAL_STAGES_V1");allowed.add("SCOPE=FISCAL_ONLY");
         for(String key:new String[]{"FISCAL_TOTAL_RESULT","FISCAL_TAX_RESULT","FISCAL_SUBTOTAL_RESULT"})allow(allowed,key,ReceiptDiagnostics.FiscalResult.values());
+        allow(allowed,"FISCAL_RECOVERY",ReceiptDiagnostics.Recovery.values());
         allow(allowed,"FISCAL_HEADING",ReceiptDiagnostics.FiscalHeading.values());allow(allowed,"FISCAL_AMOUNT",ReceiptDiagnostics.MoneyToken.values());allow(allowed,"FISCAL_BINDING",ReceiptDiagnostics.Binding.values());allow(allowed,"FISCAL_GEOMETRY",ReceiptDiagnostics.Geometry.values());
         allow(allowed,"TOTAL_STOP",ReceiptDiagnostics.TotalStop.values());allow(allowed,"TAX_STOP",ReceiptDiagnostics.TaxStop.values());allow(allowed,"TAX_ROLE",ReceiptDiagnostics.FiscalRole.values());allow(allowed,"TAX_RATES",ReceiptDiagnostics.Rates.values());allow(allowed,"TAX_VALUES",ReceiptDiagnostics.Values.values());allow(allowed,"TAX_BASIS",ReceiptParser.AmountBasis.values());
         for(String key:new String[]{"TAX_GRAMMAR","FISCAL_BOUNDARY","FISCAL_COLUMN","FISCAL_SUM","FISCAL_PAYMENT"})allow(allowed,key,ReceiptDiagnostics.Gate.values());

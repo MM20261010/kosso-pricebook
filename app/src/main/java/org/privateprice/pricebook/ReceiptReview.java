@@ -217,6 +217,7 @@ final class ReceiptReview {
     private String fiscalValue(ReceiptParser.Receipt a,ReceiptParser.Kind kind){
         Long amount=kind==ReceiptParser.Kind.SUBTOTAL?a.subtotal:a.total;
         boolean pending=kind==ReceiptParser.Kind.SUBTOTAL?a.subtotalUncertain:a.totalUncertain;
+        if(kind==ReceiptParser.Kind.TOTAL&&!summaryEdited){java.util.LinkedHashSet<Long> alternatives=new java.util.LinkedHashSet<>();if(amount!=null)alternatives.add(amount);for(Held h:held)if(h.source.aggregateKind==kind&&h.choice==Choice.UNRESOLVED)alternatives.add(h.item.lineAmount);alternatives.addAll(a.totalCandidates);if(alternatives.size()>1)return "要確認（合計候補 "+new ArrayList<>(alternatives).subList(0,Math.min(3,alternatives.size()))+"円）";}
         for(Held h:held)if(h.source.aggregateKind==kind){if(h.choice==Choice.SUBTOTAL&&!summaryEdited)pending=false;else if(h.choice==Choice.UNRESOLVED&&amount==null)return h.item.lineAmount+"円（要確認）";}
         if(kind==ReceiptParser.Kind.TOTAL&&amount==null&&!summaryEdited&&!a.totalCandidates.isEmpty())return "要確認（合計候補 "+a.totalCandidates.subList(0,Math.min(3,a.totalCandidates.size()))+"円）";
         return amount==null?"未取得":amount+"円"+(pending?"（要確認）":"");

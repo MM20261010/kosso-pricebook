@@ -258,6 +258,81 @@
       "fiscal_stages": true,
       "sha256": "cfcb7324a957c6572bae1d6b425ba0d4c83203e46905339cea3eccb4ee5213d2",
       "font_sha256": "b76b0433203017ca80401b2ee0dd69350349871c4b19d504c34dbdd80541690a"
+    },
+    {
+      "id": "v0812-columns-fiscal",
+      "image": "v0812-columns-fiscal.png",
+      "items": [
+        "架空もやし 200g",
+        "架空パン 6枚入",
+        "架空コーヒー 500g",
+        "架空豆腐 300g",
+        "架空洗剤 CV-20",
+        "架空ビタミンC"
+      ],
+      "line_amounts": [
+        6,
+        158,
+        1460,
+        490,
+        399,
+        359
+      ],
+      "date": "2026-11-04",
+      "fiscal_recovery": true,
+      "known_ocr_limit": false,
+      "sha256": "b25763f7aa52404e3355447fa9ad4d39079ad94a41a7b961833d80eb2da5cfa0",
+      "font_sha256": "b76b0433203017ca80401b2ee0dd69350349871c4b19d504c34dbdd80541690a"
+    },
+    {
+      "id": "v0812-stacked-fiscal",
+      "image": "v0812-stacked-fiscal.png",
+      "items": [
+        "架空もやし 200g",
+        "架空パン 6枚入",
+        "架空コーヒー 500g",
+        "架空豆腐 300g",
+        "架空洗剤 CV-20",
+        "架空ビタミンC"
+      ],
+      "line_amounts": [
+        6,
+        158,
+        1460,
+        490,
+        399,
+        359
+      ],
+      "date": "2026-11-04",
+      "fiscal_recovery": true,
+      "known_ocr_limit": false,
+      "sha256": "de9d64d34cb7c88ef8bdd4a19acabd8d25161c73cccd13cf03e438a6ba1126ea",
+      "font_sha256": "b76b0433203017ca80401b2ee0dd69350349871c4b19d504c34dbdd80541690a"
+    },
+    {
+      "id": "v0812-stacked-tall-stress-fiscal",
+      "image": "v0812-stacked-tall-stress-fiscal.png",
+      "items": [
+        "架空もやし 200g",
+        "架空パン 6枚入",
+        "架空コーヒー 500g",
+        "架空豆腐 300g",
+        "架空洗剤 CV-20",
+        "架空ビタミンC"
+      ],
+      "line_amounts": [
+        6,
+        158,
+        1460,
+        490,
+        399,
+        359
+      ],
+      "date": "2026-11-04",
+      "fiscal_recovery": false,
+      "known_ocr_limit": true,
+      "sha256": "010f6d4832930ee39a0264f2cf3d8d833d9c7b5de59ab4e3ffd27c814bae4737",
+      "font_sha256": "b76b0433203017ca80401b2ee0dd69350349871c4b19d504c34dbdd80541690a"
     }
   ]
 }

@@ -93,7 +93,7 @@ public final class ReceiptFiscalStagesTest {
         Receipt far=ReceiptParser.parseDocument(new OcrDocument("fictional fiscal gap",1200,900,distant));
         check(!total(far)&&far.decisions.stream().anyMatch(d->d.audit.fiscal.binding==Binding.GAP_REJECTED),"a standalone amount beyond the heading gap is not borrowed");
         Receipt overlappedHeader=ReceiptParser.parseDocument(new OcrDocument("fictional overlapping tax header",1200,800,List.of(box("架空商品A100",70,10,920),box("架空商品B200",70,50,920),box("小計300",70,90,920),box("税抜対象額 消費税額",70,130,920),box("税抜対象額 消費税額",72,133,920),box("8%200 16",70,170,920),box("10%100 10",70,210,920))));
-        check(overlappedHeader.taxAmount==null&&band(overlappedHeader,8).uncertain&&band(overlappedHeader,10).uncertain,"ambiguous heading geometry propagates to dependent tax column interpretation");
+        check(overlappedHeader.taxAmount==26&&overlappedHeader.taxAmountUncertain&&band(overlappedHeader,8).uncertain&&band(overlappedHeader,10).uncertain,"duplicate-only heading view can supply a review proposal, never a confirmed tax interpretation");
         Receipt grammar=text(PRE+"8%対象額2OO税16\n合計324");
         check(grammar.items.size()==2&&grammar.taxDetailsPending&&grammar.decisions.stream().anyMatch(d->d.audit.fiscal.tax==TaxStop.GRAMMAR_REJECTED),"corrupt financial number stays out of goods, grammar is not relaxed into a number");anonymous(grammar);
         Receipt missingRole=text(PRE+"8%200 16");check(missingRole.decisions.stream().anyMatch(d->d.audit.fiscal.tax==TaxStop.INFERRED_ROLES),"arithmetic-only role proposal remains explicitly inferred");

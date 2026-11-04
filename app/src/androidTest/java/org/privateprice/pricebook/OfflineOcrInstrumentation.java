@@ -138,6 +138,17 @@ public final class OfflineOcrInstrumentation extends Instrumentation {
         if(view.getVisibility()!=android.view.View.VISIBLE)return "";StringBuilder text=new StringBuilder();if(view instanceof android.widget.TextView)text.append(((android.widget.TextView)view).getText()).append('\n');
         if(view instanceof android.view.ViewGroup){android.view.ViewGroup group=(android.view.ViewGroup)view;for(int i=0;i<group.getChildCount();i++)text.append(visibleText(group.getChildAt(i)));}return text.toString();
     }
+    private void recoveryResult(ReceiptParser.Receipt receipt){
+        check(receipt.items.size()==6&&receipt.itemSum()==2872);
+        check(receipt.total==null&&receipt.heldItems.stream().anyMatch(h->h.aggregateKind==ReceiptParser.Kind.TOTAL&&h.item.price==3140)&&receipt.heldItems.stream().anyMatch(h->h.aggregateKind==ReceiptParser.Kind.SUBTOTAL));
+        ReceiptParser.TaxBreakdown eight=receipt.taxBreakdowns.stream().filter(b->b.rate==8).findFirst().orElseThrow(),ten=receipt.taxBreakdowns.stream().filter(b->b.rate==10).findFirst().orElseThrow();
+        check(eight.base==960&&eight.tax==77&&eight.itemCount==5&&eight.uncertain);
+        check(ten.base==1912&&ten.tax==191&&ten.itemCount==3&&ten.uncertain);
+        ReceiptReview model=new ReceiptReview(receipt);
+        check(receipt.items.get(1).unitPrice==79&&receipt.items.get(1).quantity==2&&receipt.items.get(3).unitPrice==245&&receipt.items.get(3).quantity==2&&model.items.stream().filter(i->i.quantityState==ReceiptReview.QuantityState.PROVISIONAL_ONE).count()==4&&model.items.stream().noneMatch(i->i.selected||i.grossUnit!=null));
+        String brief=ReceiptDiagnostics.anonymousFiscal(receipt);
+        check(receipt.taxAmount==268&&receipt.taxAmountUncertain&&receipt.taxAmountFromBreakdown&&brief.length()<=7030&&brief.contains("SCOPE=FISCAL_ONLY")&&!brief.contains("架空")&&!brief.contains("3140"));
+    }
     @Override public void onCreate(Bundle args){super.onCreate(args);start();}
     @Override public void onStart(){
         Bundle result=new Bundle();
@@ -145,7 +156,7 @@ public final class OfflineOcrInstrumentation extends Instrumentation {
             check(BuildConfig.DEBUG);
             try(InputStream in=getTargetContext().getAssets().open("build-info.json")){
                 JSONObject build=new JSONObject(new String(in.readAllBytes(),StandardCharsets.UTF_8));
-                check(build.getInt("version_code")==19&&BuildConfig.VERSION_CODE==19);
+                check(build.getInt("version_code")==20&&BuildConfig.VERSION_CODE==20);
                 check(build.getString("source_commit").equals(BuildConfig.SOURCE_COMMIT)&&build.getBoolean("working_tree_dirty")==BuildConfig.SOURCE_DIRTY);
             }
             checks+=ReceiptClassificationAuditTest.run();
@@ -154,6 +165,7 @@ public final class OfflineOcrInstrumentation extends Instrumentation {
             checks+=ReceiptConfirmationTest.run();
             checks+=ReceiptFiscalTest.run();
             checks+=ReceiptFiscalStagesTest.run();
+            checks+=ReceiptFiscalRecoveryTest.run();
             PaddleOcr.verifyAssets(getTargetContext().getAssets());checks++;
             JSONArray fixtures;
             try(InputStream in=getContext().getAssets().open("synthetic-manifest.json")){
@@ -168,6 +180,13 @@ public final class OfflineOcrInstrumentation extends Instrumentation {
                     OcrDocument document=PaddleOcr.recognizeDocument(getTargetContext(),image);
                     check(!document.regions.isEmpty());
                     ReceiptParser.Receipt receipt=ReceiptParser.parseDocument(document);
+                    if(fixture.optBoolean("known_ocr_limit",false)){
+                        // Execution/safety checks only. Do not count this image as recognition accuracy success.
+                        check(receipt.items.size()<=80&&new ReceiptReview(receipt).items.stream().noneMatch(i->i.selected||i.ready()));
+                        check(!image.isRecycled()&&fingerprint(image)==before);
+                        String tess=ReceiptOcr.recognize(getTargetContext(),image);check(!tess.isEmpty()&&!image.isRecycled());check(fingerprint(image)==before);
+                        System.out.println("KNOWN_LIMIT fictional tall-layout OCR accuracy remains unresolved");continue;
+                    }
                     check(receipt.items.size()==fixture.getJSONArray("items").length());check(receipt.date.equals(fixture.getString("date")));
                     check(!receipt.store.isEmpty());
                     JSONArray names=fixture.getJSONArray("items"),amounts=fixture.getJSONArray("line_amounts");
@@ -209,6 +228,11 @@ public final class OfflineOcrInstrumentation extends Instrumentation {
                         check(receipt.items.get(1).quantity==2&&receipt.items.get(1).unitPrice==79&&receipt.items.get(3).quantity==2&&receipt.items.get(3).unitPrice==245);
                         ReceiptReview fiscal=new ReceiptReview(receipt);
                         check(fiscal.items.stream().filter(i->i.quantityState==ReceiptReview.QuantityState.PROVISIONAL_ONE).count()==4&&fiscal.fiscalStatus().contains("税込の最終合計：3140円（要確認）")&&(!joined||receipt.decisions.stream().anyMatch(d->d.audit.fiscal.tax==ReceiptDiagnostics.TaxStop.JOINED_RATE_PROPOSAL)));
+                    }
+                    if(fixture.optBoolean("fiscal_recovery",false)){
+                        recoveryResult(receipt);
+                        // Deliberate duplicate-region injection into real synthetic-image model output.
+                        recoveryResult(ReceiptParser.parseDocument(ReceiptFiscalRecoveryScenario.duplicateFiscal(document)));
                     }
                     check(!image.isRecycled()&&fingerprint(image)==before);
                     String tess=ReceiptOcr.recognize(getTargetContext(),image);
