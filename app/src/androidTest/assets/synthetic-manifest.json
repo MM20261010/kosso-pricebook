@@ -333,6 +333,54 @@
       "known_ocr_limit": true,
       "sha256": "010f6d4832930ee39a0264f2cf3d8d833d9c7b5de59ab4e3ffd27c814bae4737",
       "font_sha256": "b76b0433203017ca80401b2ee0dd69350349871c4b19d504c34dbdd80541690a"
+    },
+    {
+      "id": "v0813-damaged-fiscal",
+      "image": "v0813-damaged-fiscal.png",
+      "items": [
+        "架空もやし 200g",
+        "架空パン 6枚入",
+        "架空コーヒー 500g",
+        "架空豆腐 300g",
+        "架空洗剤 CV-20",
+        "架空ビタミンC"
+      ],
+      "line_amounts": [
+        126,
+        182,
+        1300,
+        630,
+        421,
+        341
+      ],
+      "date": "2026-11-04",
+      "fiscal_rescue": true,
+      "sha256": "87523a838e585ddd132d61ae3204de665fc3c426533d7bb8a196e84b1fe8627d",
+      "font_sha256": "b76b0433203017ca80401b2ee0dd69350349871c4b19d504c34dbdd80541690a"
+    },
+    {
+      "id": "v0813-split-fiscal",
+      "image": "v0813-split-fiscal.png",
+      "items": [
+        "架空もやし 200g",
+        "架空パン 6枚入",
+        "架空コーヒー 500g",
+        "架空豆腐 300g",
+        "架空洗剤 CV-20",
+        "架空ビタミンC"
+      ],
+      "line_amounts": [
+        126,
+        182,
+        1300,
+        630,
+        421,
+        341
+      ],
+      "date": "2026-11-04",
+      "fiscal_rescue": true,
+      "sha256": "7f70b36784790c1d2e93d27ae48c6d7a6c46caad66237c7b43702850e0dab72e",
+      "font_sha256": "b76b0433203017ca80401b2ee0dd69350349871c4b19d504c34dbdd80541690a"
     }
   ]
 }

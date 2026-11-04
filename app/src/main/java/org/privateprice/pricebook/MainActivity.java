@@ -317,7 +317,7 @@ public final class MainActivity extends Activity {
         if(BuildConfig.DEBUG)details.addView(button("ビルド・領域別の分類理由（端末内だけ）",()->showClassificationAudit(receipt)));
         details.addView(text("OCR時点の照合："+receipt.reconciliation(),13,false,MUTED));
         for(String warning:receipt.warnings)details.addView(text("・"+warning,13,false,MUTED));
-        for(ReceiptParser.TaxBreakdown b:receipt.taxBreakdowns)details.addView(text(b.rate+"% / 対象点数 "+(b.itemCount==null?"未取得":b.itemCount+"点")+" / "+ReceiptParser.basisLabel(b.amountBasis)+"対象額 "+(b.base==null?"未取得":b.base+"円")+" / 消費税額 "+(b.tax==null?"未取得":b.tax+"円")+(b.uncertain?"（要確認）":"")+"\n端数方式は未確定。商品単価へ自動配分しません。",13,false,MUTED));
+        for(ReceiptParser.TaxBreakdown b:receipt.taxBreakdowns)details.addView(text(b.rate+"% / 対象点数 "+(b.itemCount==null?"未取得":b.itemCount+"点")+" / "+ReceiptParser.basisLabel(b.amountBasis)+"対象額 "+(b.baseAlternatives.isEmpty()?(b.base==null?"未取得":b.base+"円（"+ReceiptFiscalNotation.sourceLabel(b.baseSource)+"）"):"候補 "+b.baseAlternatives+"円（要確認）")+" / 消費税額 "+(b.tax==null?"未取得":b.tax+"円（"+ReceiptFiscalNotation.sourceLabel(b.taxSource)+"）")+(b.uncertain?"（要確認）":"")+"\n端数方式は未確定。商品単価へ自動配分しません。",13,false,MUTED));
         StringBuilder classified=new StringBuilder();
         for(ReceiptParser.Line line:receipt.lines)if(line.kind!=ReceiptParser.Kind.ITEM&&line.kind!=ReceiptParser.Kind.ITEM_DETAIL)classified.append(line.kind).append("：").append(line.raw).append('\n');
         TextView lines=text(classified.toString(),12,false,MUTED);lines.setTextIsSelectable(true);details.addView(lines);

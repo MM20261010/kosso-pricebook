@@ -8,6 +8,7 @@ import org.privateprice.pricebook.ReceiptParser.AmountBasis;
 import org.privateprice.pricebook.ReceiptParser.Kind;
 import org.privateprice.pricebook.ReceiptParser.Receipt;
 import org.privateprice.pricebook.ReceiptParser.TaxBreakdown;
+import org.privateprice.pricebook.ReceiptParser.ValueSource;
 import org.privateprice.pricebook.ReceiptDiagnostics.*;
 
 /** Bounded fiscal interpretation of already recognized text. No IO or item tax allocation. */
@@ -69,6 +70,12 @@ final class ReceiptFiscal {
         long numerator=base*rate,denominator=basis==AmountBasis.INCLUSIVE?100+rate:100;
         return tax==numerator/denominator||tax==(numerator+denominator-1)/denominator;
     }
+    static boolean roundingPossible(long base,long tax,int rate,AmountBasis basis,Integer count){
+        if(base<0||tax<0||tax>base)return false;
+        if(count==null)return true; // Unknown taxable calculation unit: do not claim a strict contradiction.
+        long divisor=basis==AmountBasis.INCLUSIVE?100+rate:100,numerator=base*rate,tolerance=Math.max(0,count-1);
+        return tax>=Math.max(0,numerator/divisor-tolerance)&&tax<=(numerator+divisor-1)/divisor+tolerance;
+    }
     /** A missing rate boundary can only be proposed with independently observed matching bases. */
     private boolean joinedTaxProposal(String s,int index,FiscalAudit audit){
         if(!numericGrammar(s)||s.contains("対象")||!(role==FiscalRole.TAX||s.matches(".*(?:消費税|税額|内税|外税).*")))return false;
@@ -81,7 +88,7 @@ final class ReceiptFiscal {
         if(left==null||right==null||left.base==null||right.base==null||left.uncertain||right.uncertain||receipt.taxConflict
             ||!compatible(left.base,a,first,left.amountBasis)||!compatible(right.base,b,second,right.amountBasis))return false;
         if(left.tax!=null&&!left.tax.equals(a)||right.tax!=null&&!right.tax.equals(b)){receipt.taxConflict=true;return false;}
-        left.tax=a;right.tax=b;left.uncertain=true;right.uncertain=true;left.rolesInferred=true;right.rolesInferred=true;
+        left.tax=a;right.tax=b;left.taxSource=ValueSource.PROPOSED;right.taxSource=ValueSource.PROPOSED;left.uncertain=true;right.uncertain=true;left.rolesInferred=true;right.rolesInferred=true;
         joinedTaxCandidate=a+b;receipt.taxDetailsPending=true;role=FiscalRole.TAX;headerOpen=false;lastTax=index;
         audit.tax=TaxStop.JOINED_RATE_PROPOSAL;audit.rates=Rates.JOINED_PROPOSAL;audit.role=role;audit.values=Values.BASE_AND_TAX;
         audit.basis=left.amountBasis==right.amountBasis?left.amountBasis:AmountBasis.UNKNOWN;return true;
@@ -148,32 +155,32 @@ final class ReceiptFiscal {
         AmountBasis declared=basis(s);if(declared==AmountBasis.UNKNOWN)declared=sectionBasis;if(declared==AmountBasis.UNKNOWN)declared=receipt.amountBasis;
         if(declared!=AmountBasis.UNKNOWN){if(b.amountBasis!=AmountBasis.UNKNOWN&&b.amountBasis!=declared){b.uncertain=true;receipt.taxConflict=true;}else b.amountBasis=declared;}
         String body=RATE.matcher(s).replaceAll(" ");Matcher count=COUNT.matcher(body);boolean explicitCount=count.find();
-        if(explicitCount){int value=Integer.parseInt(count.group(1));if(value<0||value>999)b.uncertain=true;else if(b.itemCount!=null&&b.itemCount!=value){b.uncertain=true;receipt.taxConflict=true;}else b.itemCount=value;body=count.replaceAll(" ");}
+        if(explicitCount){int value=Integer.parseInt(count.group(1));if(value<0||value>999)b.uncertain=true;else if(b.itemCount!=null&&b.itemCount!=value){b.uncertain=true;receipt.taxConflict=true;}else{b.itemCount=value;b.countSource=ValueSource.PRINTED;}body=count.replaceAll(" ");}
         if(body.contains("-")||!numericGrammar(body)){b.uncertain=true;receipt.taxDetailsPending=true;return TaxStop.INVALID_NUMBER;}
         Long base=labeled(body,"課税対象|対象(?:金額|額)?|本体(?:価格)?"),tax=labeled(body,"消費税(?:額|等)?|内消費税等?|内税額?|外税額?|税額|税(?!率)");
-        List<Long> values=numbers(body);
+        List<Long> values=numbers(body);boolean inferredRoles=false;
         if(values.isEmpty()){if(role==FiscalRole.BASE||role==FiscalRole.TAX){pendingRate=rate;pendingIndex=index;pendingRow=row;return TaxStop.WAITING_AMOUNT;}receipt.taxDetailsPending=true;return TaxStop.INVALID_NUMBER;}
         if(role==FiscalRole.COLUMNS&&base==null&&tax==null){
             List<int[]> order=new ArrayList<>();int atBase=baseColumn(columns),atTax=columns.indexOf("消費税"),atCount=columns.indexOf("点数");if(atTax<0)atTax=columns.indexOf("税額");
             if(atBase>=0)order.add(new int[]{0,atBase});if(atTax>=0)order.add(new int[]{1,atTax});if(atCount>=0&&!explicitCount)order.add(new int[]{2,atCount});order.sort((a,c)->Integer.compare(a[1],c[1]));
-            if(values.size()==order.size())for(int n=0;n<order.size();n++){long v=values.get(n);switch(order.get(n)[0]){case 0:base=v;break;case 1:tax=v;break;default:if(v>999||b.itemCount!=null&&b.itemCount!=v){b.uncertain=true;receipt.taxConflict=true;}else b.itemCount=(int)v;}}
+            if(values.size()==order.size())for(int n=0;n<order.size();n++){long v=values.get(n);switch(order.get(n)[0]){case 0:base=v;break;case 1:tax=v;break;default:if(v>999||b.itemCount!=null&&b.itemCount!=v){b.uncertain=true;receipt.taxConflict=true;}else{b.itemCount=(int)v;b.countSource=ValueSource.PRINTED;}}}
         }
         if(values.size()==1&&base==null&&tax==null){if(role==FiscalRole.BASE||body.contains("対象"))base=values.get(0);else if(role==FiscalRole.TAX)tax=values.get(0);}
         if(values.size()==2&&base==null&&tax==null){
             if(role==FiscalRole.COLUMNS&&(!columns.contains("点数")||explicitCount)){int atBase=baseColumn(columns),atTax=columns.indexOf("消費税");if(atTax<0)atTax=columns.indexOf("税額");if(atBase>=0&&atTax>=0){base=values.get(atBase<atTax?0:1);tax=values.get(atBase<atTax?1:0);}}
-            if(base==null&&tax==null){boolean forward=compatible(values.get(0),values.get(1),rate,b.amountBasis),reverse=compatible(values.get(1),values.get(0),rate,b.amountBasis);if(forward!=reverse){base=values.get(forward?0:1);tax=values.get(forward?1:0);b.rolesInferred=true;b.uncertain=true;}}
+            if(base==null&&tax==null){boolean forward=compatible(values.get(0),values.get(1),rate,b.amountBasis),reverse=compatible(values.get(1),values.get(0),rate,b.amountBasis);if(forward!=reverse){base=values.get(forward?0:1);tax=values.get(forward?1:0);b.rolesInferred=true;b.uncertain=true;inferredRoles=true;}}
         }
         if(base==null&&tax==null){b.uncertain=true;receipt.taxDetailsPending=true;return gap?TaxStop.SECTION_GAP:TaxStop.ROLES_UNKNOWN;}
         if(body.contains("対象")&&base==null||body.matches(".*(?:消費税|税額|内税|外税).*" )&&tax==null){b.uncertain=true;receipt.taxDetailsPending=true;}
-        if(base!=null){if(b.base!=null&&!b.base.equals(base)){b.uncertain=true;receipt.taxConflict=true;}else b.base=base;}
-        if(tax!=null){if(b.tax!=null&&!b.tax.equals(tax)){b.uncertain=true;receipt.taxConflict=true;}else b.tax=tax;}
+        if(base!=null){if(b.base!=null&&!b.base.equals(base)){b.uncertain=true;receipt.taxConflict=true;}else{b.base=base;b.baseSource=inferredRoles?ValueSource.PROPOSED:ValueSource.PRINTED;}}
+        if(tax!=null){if(b.tax!=null&&!b.tax.equals(tax)){b.uncertain=true;receipt.taxConflict=true;}else{b.tax=tax;b.taxSource=inferredRoles?ValueSource.PROPOSED:ValueSource.PRINTED;}}
         return receipt.taxConflict?TaxStop.CONFLICT:b.rolesInferred?TaxStop.INFERRED_ROLES:TaxStop.OBSERVED_FIELDS;
     }
     void finish(){
         if(pendingRate!=null)receipt.taxDetailsPending=true;
         long taxSum=0;boolean allTax=!receipt.taxBreakdowns.isEmpty();
         for(TaxBreakdown b:receipt.taxBreakdowns){
-            if(b.base!=null&&b.tax!=null&&b.amountBasis!=AmountBasis.UNKNOWN&&!compatible(b.base,b.tax,b.rate,b.amountBasis)){b.uncertain=true;receipt.taxConflict=true;}
+            if(b.base!=null&&b.tax!=null&&b.amountBasis!=AmountBasis.UNKNOWN&&!compatible(b.base,b.tax,b.rate,b.amountBasis)){b.uncertain=true;if(roundingPossible(b.base,b.tax,b.rate,b.amountBasis,b.itemCount))receipt.taxDetailsPending=true;else receipt.taxConflict=true;}
             allTax&=b.tax!=null&&!b.uncertain;if(b.tax!=null)taxSum+=b.tax;
         }
         if(taxSum>1_000_000){allTax=false;receipt.taxConflict=true;receipt.taxAmountUncertain=true;}
@@ -190,11 +197,11 @@ final class ReceiptFiscal {
     static boolean numericConflict(Receipt r,long sum){
         if(r.taxConflict)return true;
         long bases=0,taxes=0;int count=0;boolean allBase=!r.taxBreakdowns.isEmpty(),allTax=allBase,allCount=allBase;
-        for(TaxBreakdown b:r.taxBreakdowns){allBase&=b.base!=null&&!b.uncertain&&b.amountBasis==r.amountBasis;allTax&=b.tax!=null&&!b.uncertain;allCount&=b.itemCount!=null&&!b.uncertain;if(b.base!=null)bases+=b.base;if(b.tax!=null)taxes+=b.tax;if(b.itemCount!=null)count+=b.itemCount;}
+        for(TaxBreakdown b:r.taxBreakdowns){allBase&=b.base!=null&&!b.uncertain&&b.amountBasis==r.amountBasis;allTax&=b.tax!=null&&!b.uncertain;allCount&=b.itemCount!=null&&(!b.uncertain||b.countSource==ValueSource.PRINTED);if(b.base!=null)bases+=b.base;if(b.tax!=null)taxes+=b.tax;if(b.itemCount!=null)count+=b.itemCount;}
         return allBase&&r.amountBasis!=AmountBasis.UNKNOWN&&!r.hasDiscount&&bases!=sum||allTax&&r.taxAmount!=null&&taxes!=r.taxAmount
             ||allCount&&r.printedItemCount!=null&&count!=r.printedItemCount;
     }
-    static Integer bandCount(Receipt r){int n=0;if(r.taxBreakdowns.isEmpty())return null;for(TaxBreakdown b:r.taxBreakdowns){if(b.itemCount==null||b.uncertain)return null;n+=b.itemCount;}return n;}
+    static Integer bandCount(Receipt r){int n=0;if(r.taxBreakdowns.isEmpty())return null;for(TaxBreakdown b:r.taxBreakdowns){if(b.itemCount==null||b.uncertain&&b.countSource!=ValueSource.PRINTED)return null;n+=b.itemCount;}return n;}
     enum Match { MATCH, MISMATCH, PENDING }
     static Match match(Receipt r,long sum,boolean pendingChoice){
         if(numericConflict(r,sum)||!r.hasDiscount&&r.subtotal!=null&&sum!=r.subtotal)return Match.MISMATCH;

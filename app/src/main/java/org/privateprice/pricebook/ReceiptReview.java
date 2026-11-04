@@ -116,7 +116,7 @@ final class ReceiptReview {
     Batch batch(){
         if(batch==null){batch=new Batch();for(Item i:items)if((!i.ready()||i.deferred)&&held.stream().noneMatch(h->h.item==i))batch.rows.add(new Draft(i,null));for(Held h:held)batch.rows.add(new Draft(h.item,h));
             ReceiptParser.Receipt a=aggregate();Long sub=a.subtotal,total=a.total;for(Held h:held)if(h.choice==Choice.UNRESOLVED){if(h.source.aggregateKind==ReceiptParser.Kind.TOTAL&&total==null)total=h.item.lineAmount;if(h.source.aggregateKind==ReceiptParser.Kind.SUBTOTAL&&sub==null)sub=h.item.lineAmount;}
-            batch.subtotal=batch.initialSubtotal=value(sub);batch.taxAmount=batch.initialTax=value(a.taxAmount);batch.total=batch.initialTotal=value(total);batch.summaryBasis=batch.initialBasis=a.amountBasis;}
+            batch.subtotal=batch.initialSubtotal=value(sub);batch.taxAmount=batch.initialTax=value(a.taxAmount);batch.total=batch.initialTotal=value(total);batch.summaryBasis=batch.initialBasis=a.amountBasis==ReceiptParser.AmountBasis.UNKNOWN?a.basisProposal:a.amountBasis;}
         return batch;
     }
     private static String value(Long n){return n==null?"":n.toString();}
@@ -175,6 +175,7 @@ final class ReceiptReview {
     }
     private ReceiptParser.Receipt aggregate(Batch proposed){
         ReceiptParser.Receipt n=new ReceiptParser.Receipt();n.store=store;n.date=date;n.total=receipt.total;n.subtotal=receipt.subtotal;n.taxAmount=receipt.taxAmount;n.amountBasis=receipt.amountBasis;n.includesTax=receipt.includesTax;n.hasDiscount=receipt.hasDiscount||items.stream().anyMatch(i->i.risks.contains(Risk.DISCOUNT));n.totalUncertain=receipt.totalUncertain;n.subtotalUncertain=receipt.subtotalUncertain||mismatchAccepted||items.stream().anyMatch(i->i.exceptionConfirmed&&(i.risks.contains(Risk.OCR)||i.printedUnit!=null&&i.quantity!=null&&i.printedUnit*i.quantity!=i.lineAmount));n.printedItemCount=receipt.printedItemCount;
+        n.basisProposal=receipt.basisProposal;n.basisSource=receipt.basisSource;n.basisConflict=receipt.basisConflict;if(items.stream().mapToLong(i->i.lineAmount).sum()!=receipt.itemSum()||items.stream().anyMatch(i->i.basis!=ReceiptParser.AmountBasis.UNKNOWN&&i.basis!=receipt.basisProposal))n.basisProposal=ReceiptParser.AmountBasis.UNKNOWN;
         n.taxBreakdowns.addAll(receipt.taxBreakdowns);n.taxConflict=receipt.taxConflict;n.taxAmountUncertain=receipt.taxAmountUncertain;n.taxDetailsPending=receipt.taxDetailsPending;n.taxAmountFromBreakdown=receipt.taxAmountFromBreakdown;
         n.totalCandidates.addAll(receipt.totalCandidates);
         for(Held h:held)if(h.source.provisionalAggregate){Choice choice=h.choice;if(proposed!=null)for(Draft d:proposed.rows)if(d.held==h)choice=d.choice;
@@ -185,7 +186,7 @@ final class ReceiptReview {
             if(c==Choice.DEFER||c==Choice.UNRESOLVED){if(h.source.aggregateKind==ReceiptParser.Kind.TOTAL)n.totalUncertain=true;else n.subtotalUncertain=true;}
         }
         boolean editing=proposed!=null&&proposed.confirmSummary;
-        if(editing||summaryEdited){n.subtotal=editing?summaryAmount(proposed.subtotal):confirmedSubtotal;n.taxAmount=editing?summaryAmount(proposed.taxAmount):confirmedTax;n.total=editing?summaryAmount(proposed.total):confirmedTotal;n.amountBasis=editing?proposed.summaryBasis:confirmedBasis;n.includesTax=n.amountBasis==ReceiptParser.AmountBasis.INCLUSIVE;n.subtotalUncertain=false;n.totalUncertain=false;n.taxAmountUncertain=false;n.taxAmountFromBreakdown=false;}
+        if(editing||summaryEdited){n.subtotal=editing?summaryAmount(proposed.subtotal):confirmedSubtotal;n.taxAmount=editing?summaryAmount(proposed.taxAmount):confirmedTax;n.total=editing?summaryAmount(proposed.total):confirmedTotal;n.amountBasis=editing?proposed.summaryBasis:confirmedBasis;n.includesTax=n.amountBasis==ReceiptParser.AmountBasis.INCLUSIVE;n.basisProposal=ReceiptParser.AmountBasis.UNKNOWN;n.basisSource=ReceiptParser.ValueSource.USER_CONFIRMED;n.basisConflict=false;n.subtotalUncertain=false;n.totalUncertain=false;n.taxAmountUncertain=false;n.taxAmountFromBreakdown=false;}
         if(proposed!=null&&summaryEdited&&!editing)for(Draft d:proposed.rows)if(d.held!=null&&d.choice!=d.held.choice){
             boolean total=d.held.source.aggregateKind==ReceiptParser.Kind.TOTAL;
             if(d.choice==Choice.SUBTOTAL){if(total)n.total=d.item.lineAmount;else n.subtotal=d.item.lineAmount;}
@@ -227,9 +228,19 @@ final class ReceiptReview {
         ReceiptParser.Receipt checked=aggregate();if(!unresolved&&held.stream().anyMatch(h->h.source.aggregateKind==ReceiptParser.Kind.SUBTOTAL&&h.choice==Choice.SUBTOTAL))checked.subtotalUncertain=false;
         ReceiptFiscal.Match match=ReceiptFiscal.match(checked,sum,unresolved);
         if(mismatch(items,a))match=ReceiptFiscal.Match.MISMATCH;
-        return "商品行金額計："+sum+"円（"+ReceiptParser.basisLabel(a.amountBasis)+"）\nレシート小計："+fiscalValue(a,ReceiptParser.Kind.SUBTOTAL)
+        ReceiptParser.Receipt preview=aggregate();
+        for(ReceiptParser.Kind kind:new ReceiptParser.Kind[]{ReceiptParser.Kind.SUBTOTAL,ReceiptParser.Kind.TOTAL}){
+            java.util.LinkedHashSet<Long> candidates=new java.util.LinkedHashSet<>();for(Held h:held)if(h.source.aggregateKind==kind&&h.choice==Choice.UNRESOLVED)candidates.add(h.item.lineAmount);
+            if(kind==ReceiptParser.Kind.TOTAL)candidates.addAll(preview.totalCandidates);
+            if(candidates.size()==1){if(kind==ReceiptParser.Kind.TOTAL&&preview.total==null)preview.total=candidates.iterator().next();if(kind==ReceiptParser.Kind.SUBTOTAL&&preview.subtotal==null)preview.subtotal=candidates.iterator().next();}
+        }
+        ReceiptFiscal.Match relations=ReceiptFiscalNotation.relations(preview,sum);
+        String basis=ReceiptParser.basisLabel(a.amountBasis);if(a.amountBasis==ReceiptParser.AmountBasis.UNKNOWN&&a.basisProposal!=ReceiptParser.AmountBasis.UNKNOWN)basis=ReceiptParser.basisLabel(a.basisProposal)+"候補・要確認";else if(a.basisSource==ReceiptParser.ValueSource.USER_CONFIRMED)basis+="・本人確認";
+        boolean haveBases=!a.taxBreakdowns.isEmpty()&&a.taxBreakdowns.stream().allMatch(b->b.base!=null&&b.baseAlternatives.isEmpty());long baseSum=0;for(ReceiptParser.TaxBreakdown b:a.taxBreakdowns)if(b.base!=null)baseSum+=b.base;
+        String baseStatus=haveBases?baseSum+"円"+(a.taxBreakdowns.stream().anyMatch(b->b.uncertain||b.baseSource==ReceiptParser.ValueSource.PROPOSED)?"（要確認）":""):a.taxBreakdowns.stream().anyMatch(b->!b.baseAlternatives.isEmpty())?"要確認（候補が複数）":a.taxBreakdowns.stream().anyMatch(b->b.base!=null)?"一部取得・要確認":"未取得";
+        return "商品行金額計："+sum+"円（"+basis+"）\n税率別対象額計："+baseStatus+"\nレシート小計："+fiscalValue(a,ReceiptParser.Kind.SUBTOTAL)
             +"\n税額合計："+(a.taxAmount==null?(a.taxAmountUncertain?"要確認（税額候補が競合）":a.taxDetailsPending?"未取得（内訳に要確認あり）":"未取得"):a.taxAmount+"円"+(a.taxAmountFromBreakdown?"（内訳合算・要確認）":a.taxAmountUncertain?"（要確認）":""))
-            +"\n税込の最終合計："+fiscalValue(a,ReceiptParser.Kind.TOTAL)+"\n照合："+(match==ReceiptFiscal.Match.MATCH?"一致":match==ReceiptFiscal.Match.MISMATCH?"不一致・要確認":"未確定")
+            +"\n税込の最終合計："+fiscalValue(a,ReceiptParser.Kind.TOTAL)+"\n照合："+(match==ReceiptFiscal.Match.MATCH?"一致":match==ReceiptFiscal.Match.MISMATCH?"不一致・要確認":relations==ReceiptFiscal.Match.MATCH?"未確定（候補値の金額関係は一致）":relations==ReceiptFiscal.Match.MISMATCH?"未確定（候補値の関係を要確認）":"未確定")
             +(a.amountBasis==ReceiptParser.AmountBasis.INCLUSIVE?"（内税は二重加算しません）":"");}
     String status(){ReceiptParser.Receipt a=aggregate();long sum=0;int q=0;boolean known=true;for(Item i:items){sum+=i.lineAmount;if(i.quantity==null)known=false;else q+=i.quantity;}
         return "商品 "+items.size()+"種類 / 数量 "+(known?q+"点":"未確定あり")+(items.stream().anyMatch(i->i.quantityState==QuantityState.PROVISIONAL_ONE)?"（推定を含む）":"")

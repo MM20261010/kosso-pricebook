@@ -149,6 +149,33 @@ public final class OfflineOcrInstrumentation extends Instrumentation {
         String brief=ReceiptDiagnostics.anonymousFiscal(receipt);
         check(receipt.taxAmount==268&&receipt.taxAmountUncertain&&receipt.taxAmountFromBreakdown&&brief.length()<=7030&&brief.contains("SCOPE=FISCAL_ONLY")&&!brief.contains("架空")&&!brief.contains("3140"));
     }
+    private void rescueResult(ReceiptParser.Receipt receipt){
+        check(receipt.items.size()==6&&receipt.itemSum()==3000);
+        check(receipt.total==null&&receipt.heldItems.stream().anyMatch(h->h.aggregateKind==ReceiptParser.Kind.TOTAL&&h.item.price==3264)&&receipt.heldItems.stream().anyMatch(h->h.aggregateKind==ReceiptParser.Kind.SUBTOTAL&&h.item.price==3000));
+        ReceiptParser.TaxBreakdown eight=receipt.taxBreakdowns.stream().filter(b->b.rate==8).findFirst().orElseThrow(),ten=receipt.taxBreakdowns.stream().filter(b->b.rate==10).findFirst().orElseThrow();
+        check(eight.base==1800&&eight.tax==144&&eight.itemCount==5&&eight.baseSource==ReceiptParser.ValueSource.PROPOSED&&eight.taxSource==ReceiptParser.ValueSource.PRINTED);
+        check(ten.base==1200&&ten.tax==120&&ten.itemCount==3&&ten.baseSource==ReceiptParser.ValueSource.PROPOSED&&ten.taxSource==ReceiptParser.ValueSource.PRINTED);
+        check(receipt.amountBasis==ReceiptParser.AmountBasis.UNKNOWN&&receipt.basisProposal==ReceiptParser.AmountBasis.EXCLUSIVE&&receipt.basisSource==ReceiptParser.ValueSource.PROPOSED);
+        ReceiptReview model=new ReceiptReview(receipt);check(receipt.items.get(1).unitPrice==91&&receipt.items.get(1).quantity==2&&receipt.items.get(3).unitPrice==315&&receipt.items.get(3).quantity==2&&model.items.stream().filter(i->i.quantityState==ReceiptReview.QuantityState.PROVISIONAL_ONE).count()==4&&model.items.stream().noneMatch(i->i.selected||i.grossUnit!=null));
+        check(model.fiscalStatus().contains("候補値の金額関係は一致")&&model.fiscalStatus().contains("税抜候補・要確認"));
+        String brief=ReceiptDiagnostics.anonymousFiscal(receipt);check(brief.length()<=7030&&!brief.contains("REPORT=TRUNCATED")&&brief.contains("FISCAL_BASE_RESULT=CANDIDATE")&&brief.contains("FISCAL_TOTAL_RESULT=CANDIDATE")&&!brief.contains("3264")&&!brief.contains("架空"));
+    }
+    private void rescueUi(Context isolated)throws Exception{
+        java.util.concurrent.atomic.AtomicReference<Throwable> failure=new java.util.concurrent.atomic.AtomicReference<>();
+        runOnMainSync(()->{MainActivity activity=null;try{
+            android.content.Intent intent=new android.content.Intent(getTargetContext(),MainActivity.class);android.content.pm.ActivityInfo info=getTargetContext().getPackageManager().getActivityInfo(intent.getComponent(),0);
+            activity=(MainActivity)newActivity(MainActivity.class,isolated,null,(android.app.Application)getTargetContext().getApplicationContext(),intent,info,"synthetic fiscal rescue",null,null,null);callActivityOnCreate(activity,null);
+            ReceiptReview model=new ReceiptReview(ReceiptParser.parseDocument(ReceiptFiscalRescueScenario.fixture(0)));java.lang.reflect.Field f=MainActivity.class.getDeclaredField("reviewModel");f.setAccessible(true);f.set(activity,model);
+            for(String name:new String[]{"reviewText","reviewedText"}){f=MainActivity.class.getDeclaredField(name);f.setAccessible(true);f.set(activity,"fictional fiscal rescue only");}
+            f=MainActivity.class.getDeclaredField("content");f.setAccessible(true);android.widget.LinearLayout content=(android.widget.LinearLayout)f.get(activity);content.removeAllViews();java.lang.reflect.Method render=MainActivity.class.getDeclaredMethod("showOcrReview");render.setAccessible(true);render.invoke(activity);
+            String visible=visibleText(content);check(visible.contains("税率別対象額計：3000円（要確認）")&&visible.contains("税抜候補・要確認")&&visible.contains("候補値の金額関係は一致"));
+            check(visibleEditors(content)==2&&!visible.contains("原文："));
+            check(findLabel(content,"未取得の集計を匿名診断コピー").performClick());
+            check(model.aggregate().amountBasis==ReceiptParser.AmountBasis.UNKNOWN&&model.items.stream().noneMatch(i->i.selected||i.ready()));
+            findLabel(content,"要確認の項目だけまとめて確認").performClick();check(model.batch().summaryBasis==ReceiptParser.AmountBasis.EXCLUSIVE&&!model.batch().confirmSummary&&!model.batch().summaryChanged());
+        }catch(Throwable e){failure.set(e);}finally{if(activity!=null)callActivityOnDestroy(activity);}});
+        if(failure.get()!=null)throw new IllegalStateException("Synthetic fiscal rescue UI failed",failure.get());
+    }
     @Override public void onCreate(Bundle args){super.onCreate(args);start();}
     @Override public void onStart(){
         Bundle result=new Bundle();
@@ -156,7 +183,7 @@ public final class OfflineOcrInstrumentation extends Instrumentation {
             check(BuildConfig.DEBUG);
             try(InputStream in=getTargetContext().getAssets().open("build-info.json")){
                 JSONObject build=new JSONObject(new String(in.readAllBytes(),StandardCharsets.UTF_8));
-                check(build.getInt("version_code")==20&&BuildConfig.VERSION_CODE==20);
+                check(build.getInt("version_code")==21&&BuildConfig.VERSION_CODE==21);
                 check(build.getString("source_commit").equals(BuildConfig.SOURCE_COMMIT)&&build.getBoolean("working_tree_dirty")==BuildConfig.SOURCE_DIRTY);
             }
             checks+=ReceiptClassificationAuditTest.run();
@@ -166,6 +193,7 @@ public final class OfflineOcrInstrumentation extends Instrumentation {
             checks+=ReceiptFiscalTest.run();
             checks+=ReceiptFiscalStagesTest.run();
             checks+=ReceiptFiscalRecoveryTest.run();
+            checks+=ReceiptFiscalRescueTest.run();
             PaddleOcr.verifyAssets(getTargetContext().getAssets());checks++;
             JSONArray fixtures;
             try(InputStream in=getContext().getAssets().open("synthetic-manifest.json")){
@@ -234,6 +262,9 @@ public final class OfflineOcrInstrumentation extends Instrumentation {
                         // Deliberate duplicate-region injection into real synthetic-image model output.
                         recoveryResult(ReceiptParser.parseDocument(ReceiptFiscalRecoveryScenario.duplicateFiscal(document)));
                     }
+                    if(fixture.optBoolean("fiscal_rescue",false)){
+                        rescueResult(receipt);OcrDocument duplicated=ReceiptFiscalRescueScenario.duplicateFiscal(document);check(duplicated.regions.size()>document.regions.size());rescueResult(ReceiptParser.parseDocument(duplicated));
+                    }
                     check(!image.isRecycled()&&fingerprint(image)==before);
                     String tess=ReceiptOcr.recognize(getTargetContext(),image);
                     check(!tess.isEmpty()&&!image.isRecycled());check(fingerprint(image)==before);
@@ -255,6 +286,7 @@ public final class OfflineOcrInstrumentation extends Instrumentation {
             try{
                 confirmationUi(isolated);
                 fiscalUi(isolated);
+                rescueUi(isolated);
                 PriceDb.Purchase p=new PriceDb.Purchase();p.name="架空牛乳1L";p.key=PriceMath.key(p.name);p.store="架空テスト店";p.date="2026-10-25";p.gross=218;p.quantity=2;p.tax=8;p.unit="";
                 db.addPurchase(p);String backup=db.backupJson();db.importBackup(backup);
                 List<PriceDb.Purchase> rows=db.recentPurchases(10);check(rows.size()==1);check(rows.get(0).gross==218&&rows.get(0).quantity==2&&rows.get(0).date.equals("2026-10-25"));

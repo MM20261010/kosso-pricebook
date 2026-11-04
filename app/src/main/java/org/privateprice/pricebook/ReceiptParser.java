@@ -12,6 +12,7 @@ public final class ReceiptParser {
     private ReceiptParser() { }
     public enum Kind { ITEM, ITEM_DETAIL, STORE, DATE, QUANTITY, COUNT_TOTAL, SUBTOTAL, TAX, TOTAL, DISCOUNT, PAYMENT, MANAGEMENT, HELD, OTHER }
     public enum AmountBasis { UNKNOWN, EXCLUSIVE, INCLUSIVE }
+    public enum ValueSource { UNOBTAINED, PRINTED, PROPOSED, USER_CONFIRMED }
     public static final class Line {
         public final Kind kind; public final String raw;
         Line(Kind k,String raw){kind=k;this.raw=raw;}
@@ -24,6 +25,7 @@ public final class ReceiptParser {
         public final AmountBasis amountBasis;
         public final boolean uncertainLayout,nameSuffixUncertain;
         public String managementCode=""; public boolean codeUncertain;
+        public ValueSource amountSource=ValueSource.PRINTED;
         Candidate(String n,long p,String r,Integer q,Long u,Integer t,String marks,AmountBasis basis,boolean uncertain){name=n;specification=specificationText(n);price=p;raw=r;quantity=q;unitPrice=u;taxRate=t;markers=marks;amountBasis=basis;uncertainLayout=uncertain;nameSuffixUncertain=n.matches(".*[CVcv]$")&&marks.toUpperCase(java.util.Locale.ROOT).contains(n.substring(n.length()-1).toUpperCase(java.util.Locale.ROOT));}
     }
     public static final class TaxBreakdown {
@@ -31,6 +33,8 @@ public final class ReceiptParser {
         public Integer itemCount;
         public AmountBasis amountBasis=AmountBasis.UNKNOWN;
         public boolean uncertain,rolesInferred;
+        public ValueSource baseSource=ValueSource.UNOBTAINED,taxSource=ValueSource.UNOBTAINED,countSource=ValueSource.UNOBTAINED;
+        public final List<Long> baseAlternatives=new ArrayList<>();
         TaxBreakdown(int rate){this.rate=rate;}
     }
     /** Ephemeral diagnostic only. Never included in PriceDb, backup, logs or external intents. */
@@ -83,8 +87,12 @@ public final class ReceiptParser {
         public Long total,subtotal,taxAmount;
         public Integer printedItemCount;
         public AmountBasis amountBasis=AmountBasis.UNKNOWN;
+        public AmountBasis basisProposal=AmountBasis.UNKNOWN;
+        public ValueSource basisSource=ValueSource.UNOBTAINED;
+        public boolean basisConflict;
         public boolean countFromExplicitTotal,hasDiscount,includesTax,subtotalUncertain,totalUncertain,taxAmountFromBreakdown,taxAmountUncertain,taxDetailsPending,taxConflict;
         public ReceiptDiagnostics.FiscalResult totalResult=ReceiptDiagnostics.FiscalResult.NOT_OBTAINED,taxResult=ReceiptDiagnostics.FiscalResult.NOT_OBTAINED,subtotalResult=ReceiptDiagnostics.FiscalResult.NOT_OBTAINED;
+        public ReceiptDiagnostics.FiscalResult baseResult=ReceiptDiagnostics.FiscalResult.NOT_OBTAINED;
         public long itemSum(){long n=0;for(Candidate c:items)n+=c.price;return n;}
         public int knownQuantitySum(){int n=0;for(Candidate c:items)if(c.quantity!=null)n+=c.quantity;return n;}
         public int unknownQuantityCount(){int n=0;for(Candidate c:items)if(c.quantity==null)n++;return n;}
@@ -427,8 +435,8 @@ public final class ReceiptParser {
             String s=normal(input.get(i).text);if(declaration(s)){net|=basis(s)==AmountBasis.EXCLUSIVE;gross|=basis(s)==AmountBasis.INCLUSIVE;}
             if(dateIndex<0&&validDate(s))dateIndex=i;
         }
-        if(net!=gross)r.amountBasis=net?AmountBasis.EXCLUSIVE:AmountBasis.INCLUSIVE;
-        if(net&&gross)warn(r,"税込・税抜表示が競合して未確定です。");r.includesTax=r.amountBasis==AmountBasis.INCLUSIVE;
+        if(net!=gross){r.amountBasis=net?AmountBasis.EXCLUSIVE:AmountBasis.INCLUSIVE;r.basisSource=ValueSource.PRINTED;}
+        if(net&&gross){r.basisConflict=true;warn(r,"税込・税抜表示が競合して未確定です。");}r.includesTax=r.amountBasis==AmountBasis.INCLUSIVE;
         ReceiptFiscal fiscal=new ReceiptFiscal(r);boolean dailyReport=ReceiptFiscal.dailyReport(input);
         boolean hasHeader=headerPosition(input,dateIndex,imageHeight);
         Pending pending=null;int gap=0,active=-1;ReceiptLayout.Row activeRow=null;String waitingCode="",waitingCodeRaw="";int codeIndex=-10;
@@ -641,6 +649,8 @@ public final class ReceiptParser {
         r.totalResult=r.total!=null?(r.totalUncertain?ReceiptDiagnostics.FiscalResult.CANDIDATE:ReceiptDiagnostics.FiscalResult.OBSERVED):r.heldItems.stream().anyMatch(h->h.aggregateKind==Kind.TOTAL)?ReceiptDiagnostics.FiscalResult.CANDIDATE:!r.totalCandidates.isEmpty()?ReceiptDiagnostics.FiscalResult.CONFLICT:ReceiptDiagnostics.FiscalResult.NOT_OBTAINED;
         r.taxResult=r.taxConflict?ReceiptDiagnostics.FiscalResult.CONFLICT:r.taxAmount!=null?(r.taxAmountUncertain?ReceiptDiagnostics.FiscalResult.CANDIDATE:ReceiptDiagnostics.FiscalResult.OBSERVED):r.taxDetailsPending?ReceiptDiagnostics.FiscalResult.NEEDS_REVIEW:ReceiptDiagnostics.FiscalResult.NOT_OBTAINED;
         r.subtotalResult=r.subtotal!=null?(r.subtotalUncertain?ReceiptDiagnostics.FiscalResult.CANDIDATE:ReceiptDiagnostics.FiscalResult.OBSERVED):r.heldItems.stream().anyMatch(h->h.aggregateKind==Kind.SUBTOTAL)?ReceiptDiagnostics.FiscalResult.CANDIDATE:ReceiptDiagnostics.FiscalResult.NOT_OBTAINED;
+        boolean anyBase=r.taxBreakdowns.stream().anyMatch(b->b.base!=null||!b.baseAlternatives.isEmpty()),allBases=!r.taxBreakdowns.isEmpty()&&r.taxBreakdowns.stream().allMatch(b->b.base!=null&&b.baseAlternatives.isEmpty());
+        r.baseResult=!anyBase?ReceiptDiagnostics.FiscalResult.NOT_OBTAINED:r.taxConflict?ReceiptDiagnostics.FiscalResult.CONFLICT:allBases?(r.taxBreakdowns.stream().anyMatch(b->b.uncertain||b.baseSource==ValueSource.PROPOSED)?ReceiptDiagnostics.FiscalResult.CANDIDATE:ReceiptDiagnostics.FiscalResult.OBSERVED):ReceiptDiagnostics.FiscalResult.NEEDS_REVIEW;
         if(r.items.size()==80)warn(r,"候補は80件までです。認識漏れを確認してください。");return traced(r,input);
     }
 }
