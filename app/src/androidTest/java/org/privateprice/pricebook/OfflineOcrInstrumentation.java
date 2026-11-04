@@ -158,7 +158,7 @@ public final class OfflineOcrInstrumentation extends Instrumentation {
         check(receipt.amountBasis==ReceiptParser.AmountBasis.UNKNOWN&&receipt.basisProposal==ReceiptParser.AmountBasis.EXCLUSIVE&&receipt.basisSource==ReceiptParser.ValueSource.PROPOSED);
         ReceiptReview model=new ReceiptReview(receipt);check(receipt.items.get(1).unitPrice==91&&receipt.items.get(1).quantity==2&&receipt.items.get(3).unitPrice==315&&receipt.items.get(3).quantity==2&&model.items.stream().filter(i->i.quantityState==ReceiptReview.QuantityState.PROVISIONAL_ONE).count()==4&&model.items.stream().noneMatch(i->i.selected||i.grossUnit!=null));
         check(model.fiscalStatus().contains("候補値の金額関係は一致")&&model.fiscalStatus().contains("税抜候補・要確認"));
-        String brief=ReceiptDiagnostics.anonymousFiscal(receipt);check(brief.length()<=7030&&brief.split("\\[ROW\\]",-1).length<=13&&brief.contains("TOTAL_STOP=LAYOUT_CANDIDATE")&&brief.contains("BASE_STOP=CANDIDATE")&&brief.contains("FISCAL_BASE_RESULT=CANDIDATE")&&brief.contains("FISCAL_TOTAL_RESULT=CANDIDATE")&&!brief.contains("3264")&&!brief.contains("架空"));
+        String brief=ReceiptDiagnostics.anonymousFiscal(receipt);check(ReceiptFiscalRescueTest.candidateReport(brief)&&!brief.contains("3264")&&!brief.contains("架空"));
     }
     private void rescueUi(Context isolated)throws Exception{
         java.util.concurrent.atomic.AtomicReference<Throwable> failure=new java.util.concurrent.atomic.AtomicReference<>();

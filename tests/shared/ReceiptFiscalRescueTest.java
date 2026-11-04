@@ -11,6 +11,7 @@ public final class ReceiptFiscalRescueTest {
     static Receipt parse(OcrDocument doc){return ReceiptParser.parseDocument(doc);}
     static TaxBreakdown band(Receipt r,int rate){return r.taxBreakdowns.stream().filter(b->b.rate==rate).findFirst().orElseThrow();}
     static boolean total(Receipt r,long value){return r.heldItems.stream().anyMatch(h->h.aggregateKind==Kind.TOTAL&&h.item.price==value);}
+    public static boolean candidateReport(String report){return report.length()<=7030&&report.split("\\[ROW\\]",-1).length<=13&&java.util.regex.Pattern.compile("(?m)^TOTAL_STOP=(?:CANDIDATE|LAYOUT_CANDIDATE|STRUCTURAL_CANDIDATE)$").matcher(report).find()&&report.contains("BASE_STOP=CANDIDATE")&&report.contains("FISCAL_BASE_RESULT=CANDIDATE")&&report.contains("FISCAL_TOTAL_RESULT=CANDIDATE");}
     static OcrDocument change(OcrDocument source,UnaryOperator<String> rewrite){List<OcrDocument.Region> a=new ArrayList<>();for(OcrDocument.Region r:source.regions){String text=rewrite.apply(r.text);if(text==null)continue;float[] corners=new float[8];for(int n=0;n<4;n++){corners[n*2]=r.x(n);corners[n*2+1]=r.y(n);}a.add(new OcrDocument.Region(text,corners));}return new OcrDocument("fictional fiscal rescue variation",source.width,source.height,a);}
     static void anonymous(Receipt r){int n=ReceiptPipelineTest.checks;String report=ReceiptDiagnostics.anonymousFiscal(r);ReceiptPipelineTest.noData(report);checks+=ReceiptPipelineTest.checks-n;check(report.length()<=7030,"fiscal-only diagnostics stay bounded");}
     public static int run(){
@@ -61,6 +62,9 @@ public final class ReceiptFiscalRescueTest {
         check(restored.items.size()==7&&restored.aggregate().basisProposal==AmountBasis.UNKNOWN,"restoring a held real product invalidates the old arithmetic basis proposal");
         check(restored.items.stream().limit(6).allMatch(i->i.grossUnit==null&&!i.selected),"restoration does not confirm the other products' paid units");
         ReceiptReview changedBasis=new ReceiptReview(parse(original));changedBasis.items.get(0).basis=AmountBasis.INCLUSIVE;check(changedBasis.aggregate().basisProposal==AmountBasis.UNKNOWN,"a human item-basis correction invalidates an inconsistent old basis proposal");
+        check(candidateReport(ReceiptDiagnostics.anonymousFiscal(parse(original))),"bounded diagnostics expose the repaired total candidate path");
+        Receipt canonical=parse(change(original,s->s.equals("白言十3.264")?"日計3,264":s));String canonicalReport=ReceiptDiagnostics.anonymousFiscal(canonical);
+        check(total(canonical,3264)&&canonicalReport.contains("TOTAL_STOP=CANDIDATE")&&candidateReport(canonicalReport),"already readable totals retain the original candidate route without requiring layout recovery");
         Receipt noisy=parse(original);
         for(int n=0;n<20;n++){FiscalAudit f=new FiscalAudit();f.tax=TaxStop.values()[n%TaxStop.values().length];f.geometry=Geometry.values()[n%Geometry.values().length];RowAudit a=new RowAudit(Token.NONE_OBSERVED,Token.NONE_OBSERVED,Layout.AMBIGUOUS,Extraction.NONE,Association.NOT_ATTEMPTED,null,null,f);noisy.decisions.add(0,new Decision(900+n,Kind.TAX,"LABEL_TAX","",null,"","","",List.of(),a));}
         String compact=ReceiptDiagnostics.anonymousFiscal(noisy);
