@@ -61,6 +61,11 @@ public final class ReceiptFiscalRescueTest {
         check(restored.items.size()==7&&restored.aggregate().basisProposal==AmountBasis.UNKNOWN,"restoring a held real product invalidates the old arithmetic basis proposal");
         check(restored.items.stream().limit(6).allMatch(i->i.grossUnit==null&&!i.selected),"restoration does not confirm the other products' paid units");
         ReceiptReview changedBasis=new ReceiptReview(parse(original));changedBasis.items.get(0).basis=AmountBasis.INCLUSIVE;check(changedBasis.aggregate().basisProposal==AmountBasis.UNKNOWN,"a human item-basis correction invalidates an inconsistent old basis proposal");
+        Receipt noisy=parse(original);
+        for(int n=0;n<20;n++){FiscalAudit f=new FiscalAudit();f.tax=TaxStop.values()[n%TaxStop.values().length];f.geometry=Geometry.values()[n%Geometry.values().length];RowAudit a=new RowAudit(Token.NONE_OBSERVED,Token.NONE_OBSERVED,Layout.AMBIGUOUS,Extraction.NONE,Association.NOT_ATTEMPTED,null,null,f);noisy.decisions.add(0,new Decision(900+n,Kind.TAX,"LABEL_TAX","",null,"","","",List.of(),a));}
+        String compact=ReceiptDiagnostics.anonymousFiscal(noisy);
+        check(compact.contains("REPORT=TRUNCATED")&&compact.length()<=7030&&compact.split("\\[ROW\\]",-1).length<=13,"diagnostic pressure preserves the explicit bounded-report contract");
+        check(compact.contains("TOTAL_STOP=LAYOUT_CANDIDATE")&&compact.contains("BASE_STOP=CANDIDATE")&&compact.indexOf("FISCAL_RECOVERY=TOTAL_FIELDS_PROPOSED")<compact.indexOf("FISCAL_RECOVERY=ORIGINAL"),"successful recovery stages precede noisy original failures even when the report is capped");
         System.out.println("PASS ReceiptFiscalRescue "+checks+" checks (fictional compound damage and rejection paths)");return checks;
     }
     public static void main(String[] args){run();}

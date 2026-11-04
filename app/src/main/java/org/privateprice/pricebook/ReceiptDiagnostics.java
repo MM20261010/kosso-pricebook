@@ -160,12 +160,14 @@ public final class ReceiptDiagnostics {
         StringBuilder out=header(receipt);out.append("SCOPE=FISCAL_ONLY\n");
         java.util.LinkedHashSet<String> blocks=new java.util.LinkedHashSet<>();
         int lastProduct=0;for(ReceiptParser.Decision d:receipt.decisions)if(!d.candidates.isEmpty())lastProduct=Math.max(lastProduct,d.row);
-        // Recovery and fiscal decisions first; unresolved footer rows follow. Product details stay local.
-        for(int pass=0;pass<2;pass++)for(ReceiptParser.Decision d:receipt.decisions){
+        // Preserve recovery outcomes before original failures can exhaust the compact report budget.
+        // Original fiscal decisions then unresolved footer rows follow. Product details stay local.
+        for(int pass=0;pass<4;pass++)for(ReceiptParser.Decision d:receipt.decisions){
             if(d.audit==null||!d.candidates.isEmpty()||d.row<=lastProduct)continue;FiscalAudit f=d.audit.fiscal;
             boolean explicit=d.kind==ReceiptParser.Kind.TAX||d.kind==ReceiptParser.Kind.TOTAL||d.kind==ReceiptParser.Kind.SUBTOTAL||f.recovery!=Recovery.ORIGINAL||f.total!=TotalStop.NOT_A_TOTAL&&f.total!=TotalStop.NOT_EVALUATED;
             boolean held=d.kind==ReceiptParser.Kind.HELD&&(d.reason.equals("AFTER_SUMMARY_HELD")||d.reason.equals("OVERLAPPING_REGIONS_HELD")||d.reason.equals("STRUCTURAL_SUMMARY_REVIEW")||d.reason.equals("FUZZY_SUMMARY_REVIEW"));
-            if(pass==0?!explicit:explicit||!held)continue;
+            int priority=reason(d.reason)==Reason.FISCAL_RECONSTRUCTED_REVIEW?0:f.recovery!=Recovery.ORIGINAL?1:explicit?2:held?3:4;
+            if(pass!=priority)continue;
             StringBuilder b=new StringBuilder("[ROW]\n");field(b,"KIND",d.kind);field(b,"REASON",reason(d.reason));
             field(b,"FISCAL_GEOMETRY",f.geometry);field(b,"FISCAL_BINDING",f.binding);field(b,"FISCAL_HEADING",f.heading);field(b,"FISCAL_AMOUNT",f.money);field(b,"FISCAL_RECOVERY",f.recovery);field(b,"TOTAL_STOP",f.total);corrections(b,f);
             field(b,"TAX_STOP",f.tax);field(b,"TAX_GRAMMAR",f.grammar);field(b,"TAX_RATES",f.rates);field(b,"TAX_ROLE",f.role);field(b,"TAX_BASIS",f.basis);field(b,"TAX_VALUES",f.values);
