@@ -69,3 +69,24 @@
 本人実機の税額/総額改善、修正回数削減、速度/メモリは未検証。20/50商品は合成座標であり、長い実写真OCRの合格ではない。
 
 versionCode20 / `0.8.12-debug-fiscal-recovery` / `receipt-fiscal-recovery-10`。
+
+## 最終検証・配布（2026-11-04 JST）
+
+- [実装コミットaa8b4c1](https://github.com/MM20261010/kosso-pricebook/commit/aa8b4c1f1f290e2be3b4c0f37aa039f7d1e899c0)。以後は検証文書のみの変更。
+- [手動Actions41769299297](https://github.com/MM20261010/kosso-pricebook/actions/runs/41769299297)：debug-apk / android-smokeとも成功。CI回帰1,022項目、API35 AOSP x86_64エミュレータ**1,165項目**が合格。共通回帰にはホスト/Android間の重複がある。
+- Androidでは14枚で両OCRを実行し画素不変を検査。標準13枚はPaddleの商品名/金額等の解析を検査し、新規2枚は税額/合計候補、両数量2、暫定1点、匿名出力も検査した。1枚は既知制限として実行/未確認状態の安全性だけを検査し、認識精度合格には含めない。
+- 標準2画像について、実モデルの同一領域データへの重複注入による旧新版比較はホストで確認した。Androidの試験でも同じ故障注入ヘルパーと本番解析経路を呼ぶ。画像OCRの自然な失敗と、意図的な重複注入を混同しない。
+- 集計表示・明示確認・訂正/破棄、未確認保存拒否、既存数量/重量/割引、SQLite移行・v1/v2 JSON・店舗別単価参照も完走した。LintはローカルXMLでエラー0・既存警告6、GitHubのlintDebugも成功。任意の旧v0.8 APKとのDEX比較は未実施（compare_v08_apk=false）。現行APKのDEX分類プローブは成功。
+- 架空6商品ケースの匿名診断は、旧版全文15,360字/750行から新版集計専用2,915字/142行へ短縮し、どちらも上限による切り捨てなし。本人の診断の長さを測定した値ではない。
+
+[実機用APK Artifact](https://github.com/MM20261010/kosso-pricebook/actions/runs/41769299297/artifacts/13293994223) / `kosso-pricebook-debug-v0.8.12`。
+保存期限 **2026-11-18 13:05:49 JST**。GitHubにログインしてZIPを取得・展開し、`app-debug.apk`を開く。synthetic-tests Artifactは開発用で、本人のインストール対象ではない。
+
+- 再取得APK：versionCode20、ソース`aa8b4c1f1f290e2be3b4c0f37aa039f7d1e899c0`、working_tree_dirty=false。Android上でも埋込情報とBuildConfigを照合した。
+- APK **72,660,423 byte**。SHA-256 `0eb44a74f79b185d247aac36dd5d482b180fd9353057ba9f987132d5ea1d5d77`。再取得APKとCIログが一致した。
+- 署名v2成功。証明書SHA-256 `2037b9ad68ad58bddb1420735708b4381bcdba62c7880bb89e7804e0b75966f5`。
+- 再取得APKのManifest権限集合（INTERNETなし）、バックアップ/cleartext無効、英日Tesseractと5つのPaddle資産のハッシュ・固定変換元・ライセンス同梱を再検証。3 ABIのNX/RELRO・W+Xなし・16K ELF/ZIP配置と、Paddleのネットワーク/プロセス起動API輸入なしも合格。
+- 最終DEXに再構成・数値列分割・合計候補処理があり、`ReceiptParser`から呼ばれることを確認した。短い匿名出力に私有の原文・名称・日付・金額・座標フィールドへの参照がなく、架空試験画像が通常APKへ混入しないことも確認した。
+
+旧v0.8.11とデバッグ署名が異なり、そのままの上書き更新はできない。**既存履歴がある場合は、旧版削除前に端末内JSONへ退避**し、新APK導入後に復元する。履歴がなければ退避不要。Androidが求める場合はファイルアプリ等の「この提供元のアプリを許可」を設定する。
+まず同じ写真を1回だけ読み、保存せず上部集計を原票と確認する。不足した場合だけ短い集計診断を1回コピーできる。本人の実画像・OCR全文・購入情報を外部へ求めず、実機効果と手動修正回数は未検証のままとする。main非変更・Draft PR #10維持。
