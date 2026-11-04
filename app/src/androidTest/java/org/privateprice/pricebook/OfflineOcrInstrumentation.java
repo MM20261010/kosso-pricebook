@@ -165,7 +165,9 @@ public final class OfflineOcrInstrumentation extends Instrumentation {
         runOnMainSync(()->{MainActivity activity=null;try{
             android.content.Intent intent=new android.content.Intent(getTargetContext(),MainActivity.class);android.content.pm.ActivityInfo info=getTargetContext().getPackageManager().getActivityInfo(intent.getComponent(),0);
             activity=(MainActivity)newActivity(MainActivity.class,isolated,null,(android.app.Application)getTargetContext().getApplicationContext(),intent,info,"synthetic fiscal rescue",null,null,null);callActivityOnCreate(activity,null);
-            ReceiptReview model=new ReceiptReview(ReceiptParser.parseDocument(ReceiptFiscalRescueScenario.fixture(0)));java.lang.reflect.Field f=MainActivity.class.getDeclaredField("reviewModel");f.setAccessible(true);f.set(activity,model);
+            ReceiptReview model=new ReceiptReview(ReceiptParser.parseDocument(ReceiptFiscalRescueScenario.fixture(0)));model.showQuestions=false;
+            java.lang.reflect.Field f=MainActivity.class.getDeclaredField("tab");f.setAccessible(true);f.setInt(activity,1);
+            f=MainActivity.class.getDeclaredField("reviewModel");f.setAccessible(true);f.set(activity,model);
             for(String name:new String[]{"reviewText","reviewedText"}){f=MainActivity.class.getDeclaredField(name);f.setAccessible(true);f.set(activity,"fictional fiscal rescue only");}
             f=MainActivity.class.getDeclaredField("content");f.setAccessible(true);android.widget.LinearLayout content=(android.widget.LinearLayout)f.get(activity);content.removeAllViews();java.lang.reflect.Method render=MainActivity.class.getDeclaredMethod("showOcrReview");render.setAccessible(true);render.invoke(activity);
             String visible=visibleText(content);check(visible.contains("税率別対象額計：3000円（要確認）")&&visible.contains("税抜候補・要確認")&&visible.contains("候補値の金額関係は一致"));
