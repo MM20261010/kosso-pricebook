@@ -46,7 +46,7 @@ public final class PriceDb extends SQLiteOpenHelper {
         if(list.isEmpty()||list.size()>80)throw new IllegalArgumentException();
         SQLiteDatabase database=getWritableDatabase();database.beginTransaction();
         try{
-            ContentValues v=new ContentValues();v.put("store",store);v.put("date",date);v.put("subtotal",receipt.subtotal);v.put("tax_amount",receipt.taxAmount);v.put("total",receipt.total);v.put("amount_basis",receipt.amountBasis.name());v.put("uncertain",receipt.subtotalUncertain||receipt.totalUncertain||receipt.hasDiscount?1:0);
+            ContentValues v=new ContentValues();v.put("store",store);v.put("date",date);v.put("subtotal",receipt.subtotal);v.put("tax_amount",receipt.taxAmount);v.put("total",receipt.total);v.put("amount_basis",receipt.amountBasis.name());v.put("uncertain",receipt.subtotalUncertain||receipt.totalUncertain||receipt.taxAmountUncertain||receipt.taxConflict||receipt.taxDetailsPending||receipt.hasDiscount?1:0);
             long id=database.insertOrThrow("receipts",null,v);
             for(Purchase p:list){p.receiptId=id;database.insertOrThrow("purchases",null,toPurchaseValues(p));}
             database.setTransactionSuccessful();
@@ -55,7 +55,7 @@ public final class PriceDb extends SQLiteOpenHelper {
     String receiptSummary(long id){
         try(Cursor c=getReadableDatabase().rawQuery("SELECT subtotal,tax_amount,total,amount_basis,uncertain FROM receipts WHERE id=?",new String[]{Long.toString(id)})){
             if(!c.moveToFirst())return "";
-            return "印字小計 "+(c.isNull(0)?"?":c.getLong(0))+"円 / 税額 "+(c.isNull(1)?"?":c.getLong(1))+"円 / 合計 "+(c.isNull(2)?"?":c.getLong(2))+"円\n"+ReceiptParser.basisLabel(ReceiptParser.AmountBasis.valueOf(c.getString(3)))+"（OCR候補。部分保存でも原票の集計額を保持）"+(c.getInt(4)!=0?"・見出し/割引は要確認":"");
+            return "印字小計 "+(c.isNull(0)?"?":c.getLong(0))+"円 / 税額 "+(c.isNull(1)?"?":c.getLong(1))+"円 / 合計 "+(c.isNull(2)?"?":c.getLong(2))+"円\n"+ReceiptParser.basisLabel(ReceiptParser.AmountBasis.valueOf(c.getString(3)))+"（OCR候補。部分保存でも原票の集計額を保持）"+(c.getInt(4)!=0?"・見出し/税額/割引は要確認":"");
         }
     }
     void addMemo(String name, int quantity) {

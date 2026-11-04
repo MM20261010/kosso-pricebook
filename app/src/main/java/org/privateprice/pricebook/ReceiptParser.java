@@ -12,6 +12,7 @@ public final class ReceiptParser {
     private ReceiptParser() { }
     public enum Kind { ITEM, ITEM_DETAIL, STORE, DATE, QUANTITY, COUNT_TOTAL, SUBTOTAL, TAX, TOTAL, DISCOUNT, PAYMENT, MANAGEMENT, HELD, OTHER }
     public enum AmountBasis { UNKNOWN, EXCLUSIVE, INCLUSIVE }
+    public enum ValueSource { UNOBTAINED, PRINTED, PROPOSED, USER_CONFIRMED }
     public static final class Line {
         public final Kind kind; public final String raw;
         Line(Kind k,String raw){kind=k;this.raw=raw;}
@@ -24,20 +25,28 @@ public final class ReceiptParser {
         public final AmountBasis amountBasis;
         public final boolean uncertainLayout,nameSuffixUncertain;
         public String managementCode=""; public boolean codeUncertain;
+        public ValueSource amountSource=ValueSource.PRINTED;
         Candidate(String n,long p,String r,Integer q,Long u,Integer t,String marks,AmountBasis basis,boolean uncertain){name=n;specification=specificationText(n);price=p;raw=r;quantity=q;unitPrice=u;taxRate=t;markers=marks;amountBasis=basis;uncertainLayout=uncertain;nameSuffixUncertain=n.matches(".*[CVcv]$")&&marks.toUpperCase(java.util.Locale.ROOT).contains(n.substring(n.length()-1).toUpperCase(java.util.Locale.ROOT));}
     }
     public static final class TaxBreakdown {
         public final int rate; public Long base,tax;
+        public Integer itemCount;
         public AmountBasis amountBasis=AmountBasis.UNKNOWN;
-        public boolean uncertain;
+        public boolean uncertain,rolesInferred;
+        public ValueSource baseSource=ValueSource.UNOBTAINED,taxSource=ValueSource.UNOBTAINED,countSource=ValueSource.UNOBTAINED;
+        public final List<Long> baseAlternatives=new ArrayList<>();
         TaxBreakdown(int rate){this.rate=rate;}
     }
     /** Ephemeral diagnostic only. Never included in PriceDb, backup, logs or external intents. */
     public static final class Decision {
         public final int row;public final Kind kind;public final String reason,evidence,regions,raw,normalized;
         public final double left,top,right,bottom;public final List<Integer> candidates;
+        public final ReceiptDiagnostics.RowAudit audit;
         Decision(int row,Kind kind,String reason,String evidence,ReceiptLayout.Row geometry,String regions,String raw,String normalized,List<Integer> candidates){
-            this.row=row;this.kind=kind;this.reason=reason;this.evidence=evidence;this.regions=regions;this.raw=raw;this.normalized=normalized;
+            this(row,kind,reason,evidence,geometry,regions,raw,normalized,candidates,null);
+        }
+        Decision(int row,Kind kind,String reason,String evidence,ReceiptLayout.Row geometry,String regions,String raw,String normalized,List<Integer> candidates,ReceiptDiagnostics.RowAudit audit){
+            this.audit=audit;this.row=row;this.kind=kind;this.reason=reason;this.evidence=evidence;this.regions=regions;this.raw=raw;this.normalized=normalized;
             left=geometry==null?Double.NaN:geometry.left;top=geometry==null?Double.NaN:geometry.top;right=geometry==null?Double.NaN:geometry.right;bottom=geometry==null?Double.NaN:geometry.bottom;
             this.candidates=java.util.Collections.unmodifiableList(new ArrayList<>(candidates));
         }
@@ -53,58 +62,37 @@ public final class ReceiptParser {
         return java.util.Collections.unmodifiableList(rows);
     }
 
-    // Only the fixed schema below can reach Android's user-invoked clipboard.
-    // Do not copy raw OCR, product names, receipt/region IDs, amounts, coordinates, dates, or free-form evidence.
-    private static final String[] AUDIT_COPY_FIELDS = {
-        "dateAnchor", "headerAnchor", "aboveDate", "adminSignals", "identifierShape",
-        "smallHeading", "countHint", "amountColumn", "sumMatches", "futureSummary",
-        "itemsBefore", "labelKind"
-    };
-    private static boolean safeAuditValue(String key,String value){
-        if(key.equals("dateAnchor"))return value.equals("none")||value.matches("[0-9]{1,3}");
-        if(key.equals("adminSignals")||key.equals("itemsBefore"))return value.matches("[0-9]{1,3}");
-        if(key.equals("labelKind")){
-            for(Kind kind:Kind.values())if(kind.name().equals(value))return true;
-            return false;
-        }
-        return value.equals("true")||value.equals("false");
-    }
-    /** Sanitized, candidate-scoped only. Intended for explicit clipboard copy, never automatic sharing. */
+    /** Compatibility entry point; all clipboard output now uses the enum-only exporter. */
     public static String anonymizedCandidateAudit(Receipt receipt,int candidateNumber){
-        if(receipt==null||candidateNumber<1||candidateNumber>receipt.items.size())return "";
-        StringBuilder report=new StringBuilder("OCR分類診断（匿名）\n");
-        report.append("mode=").append("POSITIONED".equals(receipt.analysisMode)?"POSITIONED":"TEXT").append('\n');
-        report.append("candidate=").append(candidateNumber).append('\n');
-        List<Decision> related=decisionsForCandidate(receipt,candidateNumber);
-        report.append("linkedRows=").append(related.size()).append('\n');
-        for(Decision decision:related){
-            report.append("row=").append(decision.row).append("; kind=").append(decision.kind.name()).append('\n');
-            report.append("reason=").append(decision.reason.matches("[A-Z][A-Z0-9_]{0,63}")?decision.reason:"UNAVAILABLE").append('\n');
-            String[] pieces=decision.evidence.split(";");
-            for(String key:AUDIT_COPY_FIELDS){
-                for(String piece:pieces){
-                    String[] pair=piece.trim().split("=",2);
-                    if(pair.length==2&&pair[0].equals(key)&&safeAuditValue(key,pair[1].trim())){
-                        report.append(key).append('=').append(pair[1].trim()).append('\n');
-                        break;
-                    }
-                }
-            }
-        }
-        return report.toString();
+        return ReceiptDiagnostics.anonymousCandidate(receipt,candidateNumber);
     }
 
+    /** Recoverable ambiguous aggregate. Never a purchase until the user explicitly restores it. */
+    public static final class HeldItem {
+        public final Candidate item; public final Integer countHint;public final boolean provisionalAggregate;
+        public final Kind aggregateKind;
+        HeldItem(Candidate item,Integer countHint){this(item,countHint,false);}
+        HeldItem(Candidate item,Integer countHint,boolean proposed){this(item,countHint,proposed,Kind.SUBTOTAL);}
+        HeldItem(Candidate item,Integer countHint,boolean proposed,Kind kind){this.item=item;this.countHint=countHint;provisionalAggregate=proposed;aggregateKind=kind;}
+    }
     public static final class Receipt {
         public final List<Candidate> items=new ArrayList<>();
+        public final List<HeldItem> heldItems=new ArrayList<>();
         public final List<Line> lines=new ArrayList<>();
         public final List<Decision> decisions=new ArrayList<>();public String analysisMode="TEXT";
         public final List<String> warnings=new ArrayList<>();
         public final List<TaxBreakdown> taxBreakdowns=new ArrayList<>();
+        public final List<Long> totalCandidates=new ArrayList<>();
         public String store="",date="";
         public Long total,subtotal,taxAmount;
         public Integer printedItemCount;
         public AmountBasis amountBasis=AmountBasis.UNKNOWN;
-        public boolean hasDiscount,includesTax,subtotalUncertain,totalUncertain,taxAmountFromBreakdown;
+        public AmountBasis basisProposal=AmountBasis.UNKNOWN;
+        public ValueSource basisSource=ValueSource.UNOBTAINED;
+        public boolean basisConflict;
+        public boolean countFromExplicitTotal,hasDiscount,includesTax,subtotalUncertain,totalUncertain,taxAmountFromBreakdown,taxAmountUncertain,taxDetailsPending,taxConflict;
+        public ReceiptDiagnostics.FiscalResult totalResult=ReceiptDiagnostics.FiscalResult.NOT_OBTAINED,taxResult=ReceiptDiagnostics.FiscalResult.NOT_OBTAINED,subtotalResult=ReceiptDiagnostics.FiscalResult.NOT_OBTAINED;
+        public ReceiptDiagnostics.FiscalResult baseResult=ReceiptDiagnostics.FiscalResult.NOT_OBTAINED;
         public long itemSum(){long n=0;for(Candidate c:items)n+=c.price;return n;}
         public int knownQuantitySum(){int n=0;for(Candidate c:items)if(c.quantity!=null)n+=c.quantity;return n;}
         public int unknownQuantityCount(){int n=0;for(Candidate c:items)if(c.quantity==null)n++;return n;}
@@ -146,21 +134,28 @@ public final class ReceiptParser {
     private static final Pattern AMOUNT=Pattern.compile("^(.*?)\\s*[¥]?(?<![0-9,])(-?"+MONEY+")\\s*円?((?:\\s*(?:(?:8|10)\\s*%|[CVcv*※軽外内非])){0,4})$");
     private static final Pattern RATE=Pattern.compile("(?<![0-9])(8|10)\\s*%");
     private static final Pattern DATE=Pattern.compile("(?<![0-9])(20[0-9]{2})[年/.-]\\s*([0-9]{1,2})[月/.-]\\s*((?>[0-9]{1,2}))日?(?:(?![0-9])|(?=(?:[01][0-9]|2[0-3]):[0-5][0-9](?::[0-5][0-9])?(?![0-9])))");
-    private static final Pattern UNIT=Pattern.compile("(?:@|単価\\s*[¥]?|[¥])("+MONEY+")\\s*円?\\s*[×xX]\\s*([0-9]{1,3})(?![0-9])\\s*(?:個|点|本|袋|枚)?");
-    private static final Pattern UNIT_ONLY=Pattern.compile("^(?:@|単価\\s*[¥]?|[¥])?("+MONEY+")\\s*円?\\s*[×xX]\\s*([0-9]{1,3})\\s*(?:個|点|本|袋|枚)?$");
+    // Bare inline products/model numbers are not unit expressions. A printed prefix,
+    // a yen suffix or an independently detected middle column supplies the evidence.
+    private static final Pattern UNIT=Pattern.compile("(?:@\\s*|単価\\s*[¥]?\\s*|¥\\s*|(?<![\\p{L}0-9])(?=[0-9,]+\\s*円\\s*[×xX]))("+MONEY+")\\s*円?\\s*[×xX]\\s*([0-9]{1,3})(?![0-9])\\s*(?:個|点|本|袋|枚)?");
+    private static final Pattern UNIT_ONLY=Pattern.compile("^(?:@\\s*|単価\\s*[¥]?\\s*|¥\\s*)?("+MONEY+")\\s*円?\\s*[×xX]\\s*([0-9]{1,3})\\s*(?:個|点|本|袋|枚)?(?:\\s*=\\s*[¥]?("+MONEY+")\\s*円?\\s*[CVcv*※軽外内非]*)?$");
+    private static final Pattern NAMED_PAIR=Pattern.compile("^単価\\s*[¥]?\\s*("+MONEY+")\\s*円?\\s*数量\\s*([0-9]{1,3})\\s*(?:個|点|本|袋|枚)?$");
+    private static final Pattern REVERSED_PAIR=Pattern.compile("^数量\\s*([0-9]{1,3})\\s*(?:個|点|本|袋|枚)?\\s*単価\\s*[¥]?\\s*("+MONEY+")\\s*円?$");
+    private static final Pattern UNIT_LABEL=Pattern.compile("^単価\\s*[¥]?\\s*("+MONEY+")\\s*円?$");
+    private static final Pattern COUNT_LABEL=Pattern.compile("^(?:数量|個数)\\s*([0-9]{1,3})\\s*(?:個|点|本|袋|枚|パック)?$");
+    private static final Pattern OBSERVED_PAIR=Pattern.compile("(?<![\\p{L}0-9])"+MONEY+"\\s*円?\\s*[×xX]\\s*[0-9]{1,3}(?![0-9])");
     private static final Pattern COUNT_ONLY=Pattern.compile("^(?:数量\\s*|個数\\s*)?([0-9]{1,3})\\s*(?:個|点|本|袋|枚|パック)$");
     private static final Pattern COUNT_PREFIX=Pattern.compile("^(?:数量\\s*|個数\\s*)?([0-9]{1,3})\\s*(?:個|点|本|袋|枚|パック)(?:\\s+|$)");
     private static final Pattern NAMED_UNIT=Pattern.compile("(?:^|\\s)単価\\s*[¥]?("+MONEY+")円?");
-    private static final class Input {String text,code="",reason="UNCLASSIFIED_HELD",evidence="not_evaluated";Kind finalKind=Kind.OTHER;Integer structuralCount,directCandidate;boolean structural,holdBoundary,codeUncertain;ReceiptLayout.Row row;Input(String s,ReceiptLayout.Row r){text=s;row=r;}}
+    static final class Input {String text,code="",reason="UNCLASSIFIED_HELD",evidence="not_evaluated";Kind finalKind=Kind.OTHER;Integer structuralCount,directCandidate;boolean structural,holdBoundary,codeUncertain,reviewSummary,fiscalValue;ReceiptLayout.Row row;final ReceiptDiagnostics.FiscalAudit fiscal=new ReceiptDiagnostics.FiscalAudit();ReceiptDiagnostics.Summary summary;ReceiptDiagnostics.Extraction extraction=ReceiptDiagnostics.Extraction.NONE;ReceiptDiagnostics.Association association=ReceiptDiagnostics.Association.NOT_ATTEMPTED;Integer attemptedCandidate;Input(String s,ReceiptLayout.Row r){text=s;row=r;fiscal.geometry=ReceiptDiagnostics.geometry(r);}}
     private static final class Pending {String name,raw;Integer quantity;Long unit;ReceiptLayout.Row row;int parts=1;boolean uncertain;Pending(String name,ReceiptLayout.Row row){this.name=name;raw=name;this.row=row;}}
-    private static final class Detail {Integer quantity;Long unit;}
+    private static final class Detail {Integer quantity;Long unit,total;boolean invalidTotal,explicitCount;String expression;}
     private static final class Amount {String name,markers;Long value;Integer rate;AmountBasis basis;boolean rateUncertain;}
     static String specificationText(String name){
         Matcher m=Pattern.compile("(?i)(?<![0-9])([0-9]+(?:[.][0-9]+)?\\s*(?:kg|g|ml|l|枚入|個入|本入|袋入|枚|パック))(?![A-Za-z])").matcher(name);
         return m.find()?m.group(1):"";
     }
     private static String compact(String s){return s.replaceAll("\\s+","").replace('稅','税');}
-    private static String normal(String s){return Normalizer.normalize(s,Normalizer.Form.NFKC).replaceAll("[\\u200B\\uFEFF\\u2060\\u00AD]","").replace('￥','¥').replace('−','-').replace('△','-').replaceAll("\\s+"," ").trim();}
+    static String normal(String s){return Normalizer.normalize(s,Normalizer.Form.NFKC).replaceAll("[\\u200B\\uFEFF\\u2060\\u00AD]","").replace('￥','¥').replace('−','-').replace('△','-').replaceAll("\\s+"," ").trim();}
     private static Long money(String s){try{long n=Long.parseLong(s.replace(",",""));return n>=0&&n<=1_000_000?n:null;}catch(Exception e){return null;}}
     private static Integer count(String s){try{int n=Integer.parseInt(s);return n>=1&&n<=999?n:null;}catch(Exception e){return null;}}
     private static String label(String s){Matcher m=AMOUNT.matcher(s);return compact(m.matches()?m.group(1):s).replaceAll("[¥:：()（）]","");}
@@ -210,9 +205,14 @@ public final class ReceiptParser {
         return amounts<=2;
     }
     private static boolean futureSummary(List<Input> input,int index){
-        boolean tax=false,total=false,payment=false;
-        for(int i=index+1;i<Math.min(input.size(),index+6);i++){
-            Kind k=kind(normal(input.get(i).text));tax|=k==Kind.TAX;total|=k==Kind.TOTAL;payment|=k==Kind.PAYMENT;
+        // A fiscal footer can be more than five OCR rows away due to tax breakdowns.
+        // Limit the search and stop across two clear intervening product-like rows.
+        boolean tax=false,total=false,payment=false;int products=0;
+        for(int i=index+1;i<Math.min(input.size(),index+13);i++){
+            String s=normal(input.get(i).text);Kind k=kind(s);
+            tax|=k==Kind.TAX;total|=k==Kind.TOTAL;payment|=k==Kind.PAYMENT;
+            Amount a=amount(s);
+            if(k==Kind.OTHER&&a!=null&&a.value!=null&&productName(a.name)&&++products>=2)return false;
         }
         return total&&(tax||payment);
     }
@@ -227,27 +227,57 @@ public final class ReceiptParser {
         Matcher m=Pattern.compile("(?<![0-9])([0-9]{1,3})(?:点|奌|占|卓)(?![\\p{L}0-9])").matcher(compact(s));
         return m.find()?count(m.group(1)):null;
     }
+    private static final String SUBTOTAL_STEM="小(?:計|訐|討|汁|什|十|鈄|言十|辻)";
     private static boolean strongSubtotalHeading(String heading){
         // Without a visible tax/total footer only hold an exceptionally compact subtotal-like label.
         // Do not hide products like "小豆8点" or "小計8点セット".
-        return compact(heading).matches("^小(?:計|訐|討|汁|什|十|鈄|言十)[0-9]{1,3}(?:点|奌|占|卓)$");
+        return compact(heading).matches("^"+SUBTOTAL_STEM+"[0-9]{1,3}(?:点|奌|占|卓)$");
     }
-    private static boolean structuralSubtotal(List<Input> input,int index,Receipt r,int width){
-        if(r.items.size()<2)return false;
-        Input in=input.get(index);Amount a=amount(normal(in.text));if(a==null||a.value==null)return false;
-        String heading=compact(a.name);Integer points=summaryCount(heading);
-        if(!heading.startsWith("小")||heading.length()>12||points==null)return false;
-        boolean hasFooter=futureSummary(input,index);
-        if(!hasFooter&&!strongSubtotalHeading(heading))return false;
-        in.structuralCount=points;in.structural=true;
-        if(!amountColumn(input,index,width)){in.holdBoundary=true;in.reason=in.row==null?"SUMMARY_LIKE_NO_POSITION_HELD":"SUMMARY_LIKE_COLUMN_MISMATCH_HELD";return false;}
-        if(!hasFooter){
-            // Retain this as an unconfirmed summary-like boundary without inventing an amount.
-            // No visible footer: even a matching item sum alone cannot prove a subtotal.
-            in.holdBoundary=true;in.reason="SUMMARY_LIKE_NO_FOOTER_HELD";return false;
+    private static boolean plausibleSubtotalHeading(String heading){
+        // No general one-edit matching here: 小豆8点 is a plausible real product.
+        // Allow a single punctuation artifact after a known subtotal-like short label.
+        return compact(heading).matches("^"+SUBTOTAL_STEM+"[0-9]{1,3}(?:点|奌|占|卓)[：:.]?$");
+    }
+    private static boolean structuralSubtotal(List<Input> input,int index,Receipt r,int width,Kind kind,boolean afterTotal){
+        Input in=input.get(index);Amount a=amount(normal(in.text));
+        String heading=a==null?normal(in.text):compact(a.name);Integer points=summaryCount(heading);
+        boolean footer=futureSummary(input,index),strong=strongSubtotalHeading(heading),plausible=plausibleSubtotalHeading(heading);
+        boolean taxContext=false;for(int next=index+1;next<Math.min(input.size(),index+5);next++)taxContext|=ReceiptFiscal.taxLike(normal(input.get(next).text));
+        boolean column=amountColumn(input,index,width),sum=a!=null&&a.value!=null&&a.value==r.itemSum();
+        ReceiptDiagnostics.CountCheck count=points==null?ReceiptDiagnostics.CountCheck.NO_HINT
+            :points<r.knownQuantitySum()+r.unknownQuantityCount()?ReceiptDiagnostics.CountCheck.BELOW_MINIMUM
+            :r.unknownQuantityCount()==0?(points==r.knownQuantitySum()?ReceiptDiagnostics.CountCheck.EXACT_KNOWN:ReceiptDiagnostics.CountCheck.KNOWN_CONTRADICTION)
+            :ReceiptDiagnostics.CountCheck.POSSIBLE_WITH_UNKNOWN;
+        ReceiptDiagnostics.SummaryStop stop;
+        if(kind!=Kind.OTHER||afterTotal)stop=ReceiptDiagnostics.SummaryStop.INELIGIBLE;
+        else if(r.items.size()<2)stop=ReceiptDiagnostics.SummaryStop.TOO_FEW_ITEMS;
+        else if(a==null||a.value==null)stop=ReceiptDiagnostics.SummaryStop.NO_AMOUNT;
+        else if(!heading.startsWith("小")||heading.length()>12)stop=ReceiptDiagnostics.SummaryStop.NOT_SMALL_HEADING;
+        else if(points==null)stop=ReceiptDiagnostics.SummaryStop.NO_COUNT_HINT;
+        else if((!footer&&!strong||footer&&!plausible)&&sum&&(column||in.row==null||taxContext)
+                &&(count==ReceiptDiagnostics.CountCheck.POSSIBLE_WITH_UNKNOWN||count==ReceiptDiagnostics.CountCheck.EXACT_KNOWN))stop=ReceiptDiagnostics.SummaryStop.UNKNOWN_HEADING_REVIEW;
+        else if(!footer&&!strong||footer&&!plausible)stop=ReceiptDiagnostics.SummaryStop.HEADING_NOT_ALLOWED;
+        else if(!footer&&heading.startsWith("小辻")&&!sum)stop=ReceiptDiagnostics.SummaryStop.SUM_CONTRADICTION;
+        else if(!footer&&heading.startsWith("小辻")&&(count==ReceiptDiagnostics.CountCheck.BELOW_MINIMUM||count==ReceiptDiagnostics.CountCheck.KNOWN_CONTRADICTION))stop=ReceiptDiagnostics.SummaryStop.COUNT_CONTRADICTION;
+        else if(!column)stop=in.row==null?ReceiptDiagnostics.SummaryStop.NO_POSITION:ReceiptDiagnostics.SummaryStop.COLUMN_MISMATCH;
+        else if(!footer)stop=ReceiptDiagnostics.SummaryStop.NO_FOOTER_HELD;
+        else stop=sum?ReceiptDiagnostics.SummaryStop.MATCHED:ReceiptDiagnostics.SummaryStop.AMOUNT_MISMATCH_HELD;
+        // This object is the actual branch result, not a second approximate diagnostic predicate.
+        in.summary=new ReceiptDiagnostics.Summary(stop,heading.matches("^"+SUBTOTAL_STEM+".*"),strong,plausible,points!=null,column,sum,footer,count);
+        switch(stop){
+            case UNKNOWN_HEADING_REVIEW:
+                in.reason="STRUCTURAL_SUMMARY_REVIEW";in.structuralCount=points;in.reviewSummary=true;return false;
+            case NO_POSITION:in.reason="SUMMARY_LIKE_NO_POSITION_HELD";break;
+            case COLUMN_MISMATCH:in.reason="SUMMARY_LIKE_COLUMN_MISMATCH_HELD";break;
+            case NO_FOOTER_HELD:in.reason="SUMMARY_LIKE_NO_FOOTER_HELD";break;
+            case AMOUNT_MISMATCH_HELD:in.reason="SUMMARY_LIKE_AMOUNT_MISMATCH_HELD";break;
+            case MATCHED:
+                in.reason="SUBTOTAL_COLUMN_COUNT_SUM_FOOTER";in.structural=true;in.structuralCount=points;
+                if(r.heldItems.size()<80)r.heldItems.add(new HeldItem(candidate(r,a.name,a.value,in.row==null?normal(in.text):in.row.text,null,null,null,a.markers,a.basis==AmountBasis.UNKNOWN?r.amountBasis:a.basis,false),points,true));
+                return true;
+            default:return false;
         }
-        if(a.value==r.itemSum()){in.reason="SUBTOTAL_COLUMN_COUNT_SUM_FOOTER";return true;}
-        in.holdBoundary=true;in.reason="SUMMARY_LIKE_AMOUNT_MISMATCH_HELD";return false;
+        in.structural=true;in.structuralCount=points;in.holdBoundary=true;return false;
     }
     public static String visibleText(String s){
         StringBuilder out=new StringBuilder();for(int i=0;i<s.length();i++){char c=s.charAt(i);if(c=='\u200b'||c=='\ufeff'||c=='\u2060'||c=='\u00ad')out.append(String.format(java.util.Locale.ROOT,"〈U+%04X〉",(int)c));else out.append(c);}return out.toString();
@@ -261,7 +291,7 @@ public final class ReceiptParser {
             Kind k=in.finalKind;String reason=in.reason;
             if(k==Kind.OTHER&&!refs.isEmpty()){k=Kind.ITEM_DETAIL;reason="NAME_USED_IN_ITEM";}
             String regions="";if(in.row!=null){StringBuilder ids=new StringBuilder();for(ReceiptLayout.Part part:in.row.parts){if(ids.length()>0)ids.append(',');ids.append(part.sourceId+1);}regions=ids.toString();}
-            r.decisions.add(new Decision(i+1,k,reason,in.evidence,in.row,regions,in.row==null?in.text:in.row.text,normal(in.text),refs));
+            r.decisions.add(new Decision(i+1,k,reason,in.evidence,in.row,regions,in.row==null?in.text:in.row.text,normal(in.text),refs,rowAudit(in)));
         }
         return r;
     }
@@ -291,8 +321,8 @@ public final class ReceiptParser {
         if(t.matches("^(?:購入点数|商品点数|お買上げ?点数|お買い上げ点数|買上点数|合計点数|点数|数量合計|購入数).*"))return Kind.COUNT_TOTAL;
         if(t.matches("^(?:数量|個数).*"))return Kind.QUANTITY;
         if(summary.matches("(?i)(?:小計|商品計|商品合計|本体価格合計|SUBTOTAL)(?:金額|額)?"))return Kind.SUBTOTAL;
-        if(summary.matches("(?i)(?:総合計|総計|総額|合計|お買上金額|お買い上げ金額|お買上げ金額|お支払(?:い)?(?:金額|合計)|支払(?:い)?金額|TOTAL)(?:金額|額)?")||t.matches("^計[¥0-9].*"))return Kind.TOTAL;
-        if(t.matches(".*(?:消費税|税額|税金|内税|外税|課税対象|軽減税率|税率|対象額|対象金額).*" )||t.matches("(?i)^(?:[0-9]+%|[(*※]?軽減|税計|税合計|内計|税[0-9¥]|点計|税込|税抜|非課税|課税|うち税|内消費|対象|TAX).*"))return Kind.TAX;
+        if(summary.matches("(?i)(?:総合計|総計|総額|合計|お買上金額|お買い上げ金額|お買上げ金額|TOTAL)(?:金額|額)?")||summary.equals("計"))return Kind.TOTAL;
+        if(ReceiptFiscal.taxLike(s)||ReceiptFiscal.taxEnvelope(s))return Kind.TAX;
         if(t.matches("(?i)^(?:現金|現計|預り|預かり|お預|釣|お釣|おつり|クレジット|カード|支払|お支払|お買上|お買い上げ|お買上げ|電子マネー|電子決済|決済|残高|ポイント|獲得|今回|累計|利用可能|チャージ|入金|PayPay|楽天ペイ|交通系|商品券|領収|登録番号|店番号|店番|店舗番号|店No|店舗No|TEL|電話|営業時間|住所|〒|STORE(?:NO|NUMBER)|REG(?:ISTER)?(?:NO|NUMBER|ID|[0-9:#.])|POS(?:NO|NUMBER|ID|[0-9:#.])|SHOP(?:NO|NUMBER|CODE|ID)|CASH|CHANGE|CREDIT|VISA|MASTERCARD|PAYMENT).*"))return Kind.PAYMENT;
         if(t.matches(".*(?:支払|決済|クレジット|ICカード|取引番号|伝票番号|レシート番号).*"))return Kind.PAYMENT;
         return Kind.OTHER;
@@ -314,9 +344,64 @@ public final class ReceiptParser {
         a.value=money(m.group(2));a.name=m.group(1).trim();a.markers=m.group(3).replaceAll("(?:8|10)\\s*%|\\s","");Matcher rate=RATE.matcher(m.group(3));while(rate.find()){int v=Integer.parseInt(rate.group(1));if(a.rate!=null&&a.rate!=v)a.rateUncertain=true;a.rate=v;}if(a.rateUncertain)a.rate=null;return a;
     }
     private static Detail detail(String s){
-        Detail d=new Detail();Matcher u=UNIT_ONLY.matcher(s),q=COUNT_ONLY.matcher(s);
-        if(u.matches()){d.unit=money(u.group(1));d.quantity=count(u.group(2));return d.unit!=null&&d.quantity!=null?d:null;}
+        Detail d=new Detail();d.expression=s;
+        Matcher u=UNIT_ONLY.matcher(s),q=COUNT_ONLY.matcher(s),named=NAMED_PAIR.matcher(s),reversed=REVERSED_PAIR.matcher(s),unitLabel=UNIT_LABEL.matcher(s),countLabel=COUNT_LABEL.matcher(s);
+        if(u.matches()){d.unit=money(u.group(1));d.quantity=count(u.group(2));d.total=u.group(3)==null?null:money(u.group(3));d.invalidTotal=u.group(3)!=null&&d.total==null;return d.unit!=null&&d.quantity!=null?d:null;}
+        if(named.matches()){d.unit=money(named.group(1));d.quantity=count(named.group(2));return d.unit!=null&&d.quantity!=null?d:null;}
+        if(reversed.matches()){d.quantity=count(reversed.group(1));d.unit=money(reversed.group(2));return d.unit!=null&&d.quantity!=null?d:null;}
+        if(unitLabel.matches()){d.unit=money(unitLabel.group(1));return d.unit==null?null:d;}
+        if(countLabel.matches()){d.quantity=count(countLabel.group(1));d.explicitCount=true;return d.quantity==null?null:d;}
         if(q.matches()){d.quantity=count(q.group(1));return d.quantity==null?null:d;}return null;
+    }
+    static boolean explicitMeasureText(String text){Detail d=detail(normal(text));return d!=null&&(d.unit!=null||d.explicitCount);}
+    static ReceiptDiagnostics.Token measureToken(String text){
+        if(text.length()>240)return ReceiptDiagnostics.Token.LIMIT_REACHED;
+        String s=normal(text);Detail d=detail(s);
+        if(d!=null){if(d.unit!=null&&d.quantity!=null)return ReceiptDiagnostics.Token.PAIR;if(d.unit!=null)return ReceiptDiagnostics.Token.UNIT_LABEL;if(d.quantity!=null)return d.explicitCount?ReceiptDiagnostics.Token.COUNT_LABEL:ReceiptDiagnostics.Token.BARE_COUNT;}
+        Amount amount=amount(s);String before=amount==null?s:amount.name;
+        for(String label:new String[]{"単価","数量"}){
+            int at=before.indexOf(label);
+            if(at>=0){Detail named=detail(before.substring(at));if(named!=null&&named.unit!=null&&named.quantity!=null)return ReceiptDiagnostics.Token.PAIR;}
+        }
+        if(UNIT.matcher(s).find()||OBSERVED_PAIR.matcher(s).find()||NAMED_PAIR.matcher(s).matches()||REVERSED_PAIR.matcher(s).matches())return ReceiptDiagnostics.Token.PAIR;
+        if(s.matches(".*(?:@|単価|数量|個数|×).*"))return ReceiptDiagnostics.Token.PARTIAL_MARKER;
+        return ReceiptDiagnostics.Token.NONE_OBSERVED;
+    }
+    private static ReceiptDiagnostics.RowAudit rowAudit(Input in){
+        ReceiptDiagnostics.Token raw=ReceiptDiagnostics.Token.NONE_OBSERVED;
+        boolean unit=false,count=false,partial=false;
+        if(in.row!=null)for(ReceiptLayout.Part part:in.row.parts){
+            ReceiptDiagnostics.Token t=measureToken(part.text);
+            if(t==ReceiptDiagnostics.Token.PAIR){raw=t;break;}
+            if(t==ReceiptDiagnostics.Token.LIMIT_REACHED){raw=t;break;}
+            unit|=t==ReceiptDiagnostics.Token.UNIT_LABEL;count|=t==ReceiptDiagnostics.Token.COUNT_LABEL||t==ReceiptDiagnostics.Token.BARE_COUNT;partial|=t==ReceiptDiagnostics.Token.PARTIAL_MARKER;
+        }
+        if(raw==ReceiptDiagnostics.Token.NONE_OBSERVED)raw=unit&&count?ReceiptDiagnostics.Token.COMPLEMENTARY_FIELDS:unit?ReceiptDiagnostics.Token.UNIT_LABEL:count?ReceiptDiagnostics.Token.COUNT_LABEL:partial?ReceiptDiagnostics.Token.PARTIAL_MARKER:ReceiptDiagnostics.Token.NONE_OBSERVED;
+        ReceiptDiagnostics.Layout layout=in.row==null?ReceiptDiagnostics.Layout.TEXT_ONLY:in.row.uncertain?ReceiptDiagnostics.Layout.AMBIGUOUS:in.row.parts.size()==1?ReceiptDiagnostics.Layout.SINGLE_REGION:ReceiptDiagnostics.Layout.MERGED_REGIONS;
+        return new ReceiptDiagnostics.RowAudit(in.row==null?ReceiptDiagnostics.Token.TEXT_NO_REGIONS:raw,measureToken(in.text),layout,in.extraction,in.association,in.summary,in.attemptedCandidate,in.fiscal);
+    }
+    private static Detail middleColumnDetail(String name,ReceiptLayout.Row row){
+        if(row==null||row.uncertain||row.parts.size()<3)return null;
+        ReceiptLayout.Part part=row.parts.get(row.parts.size()-2),price=row.parts.get(row.parts.size()-1);
+        if(part.right>=price.left)return null;
+        for(int parts=1;parts<=2&&row.parts.size()>=parts+2;parts++){
+            String expression=normal(part.text);
+            if(parts==2){
+                ReceiptLayout.Part previous=row.parts.get(row.parts.size()-3);
+                if(previous.right>=part.left)continue;
+                expression=normal(previous.text)+" "+expression;
+            }
+            if(!name.endsWith(" "+expression))continue;
+            Detail d=detail(expression);
+            if(d!=null&&d.unit!=null&&d.quantity!=null&&d.total==null&&!d.invalidTotal)return d;
+        }
+        return null;
+    }
+    static boolean weightSignal(String text){
+        return normal(text).matches("(?is).*(?:量り売|量売|重量|目方|購入重量|[×xX]\\s*[0-9]+(?:[.][0-9]+)?\\s*(?:kg|g)|100\\s*g\\s*(?:当|あたり|単価)|(?:kg|g)\\s*(?:当たり|あたり|単価)|円\\s*[/／]\\s*(?:100)?\\s*g|[0-9]+(?:[.][0-9]+)?\\s*(?:kg|g)\\s*[×xX]).*");
+    }
+    private static boolean weightDetail(String text){
+        return weightSignal(text)&&normal(text).matches("(?is)^(?:@|¥|重量|目方|購入重量|100\\s*g|単価|[0-9]+(?:[.][0-9]+)?\\s*(?:kg|g)).*");
     }
     private static Long lastAmount(String s){Amount a=amount(s);return a==null?null:a.value;}
     private static void warn(Receipt r,String s){if(!r.warnings.contains(s))r.warnings.add(s);}
@@ -331,24 +416,6 @@ public final class ReceiptParser {
     private static Candidate codedCandidate(Candidate old,String raw){
         Candidate next=new Candidate(old.name,old.price,raw+"\n"+old.raw,old.quantity,old.unitPrice,old.taxRate,old.markers,old.amountBasis,old.uncertainLayout);next.managementCode=old.managementCode;next.codeUncertain=old.codeUncertain;return next;
     }
-    private static void tax(Receipt r,String s){
-        s=s.replace('稅','税');
-        Matcher rate=RATE.matcher(s);Long n=lastAmount(s);
-        if(rate.find()){
-            int pct=Integer.parseInt(rate.group(1));TaxBreakdown band=null;for(TaxBreakdown b:r.taxBreakdowns)if(b.rate==pct)band=b;
-            if(band==null){band=new TaxBreakdown(pct);r.taxBreakdowns.add(band);}
-            if(basis(s)!=AmountBasis.UNKNOWN)band.amountBasis=basis(s);
-            Matcher base=Pattern.compile("(?:対象(?:額|金額)?|課税対象)\\s*[¥]?("+MONEY+")").matcher(s);
-            Matcher tax=Pattern.compile("(?:消費税(?:額)?|税額|税)\\s*[¥]?("+MONEY+")").matcher(s);
-            Long baseValue=base.find()?money(base.group(1)):null,taxValue=tax.find()?money(tax.group(1)):null;
-            if(baseValue!=null){if(band.base!=null&&!band.base.equals(baseValue))band.uncertain=true;band.base=baseValue;}
-            if(taxValue==null&&baseValue==null&&s.matches(".*(?:税額|消費税|税).*"))taxValue=n;
-            if(taxValue!=null){if(band.tax!=null&&!band.tax.equals(taxValue))band.uncertain=true;band.tax=taxValue;}
-            if(band.uncertain)warn(r,"同じ税率の対象額・税額が競合しています。");
-        }else if(n!=null&&s.matches(".*(?:消費税|税額|内税|税合計).*")){
-            if(r.taxAmount!=null&&!r.taxAmount.equals(n)){r.taxAmount=null;warn(r,"税額合計が競合して未確定です。");}else if(!r.warnings.contains("税額合計が競合して未確定です。"))r.taxAmount=n;
-        }
-    }
     public static List<Candidate> parse(String text){return parseReceipt(text).items;}
     public static Receipt parseReceipt(String text){
         Receipt invalid=new Receipt();if(text==null)return invalid;
@@ -362,27 +429,35 @@ public final class ReceiptParser {
         for(ReceiptLayout.Row row:rows){ReceiptLayout.Code code=codes.get(row);Input in=new Input(code==null?ReceiptLayout.productText(row,rows):code.text,row);if(code!=null){in.code=code.value;in.codeUncertain=code.uncertain;}input.add(in);}return parseInputs(input,doc.width,doc.height);
     }
     private static Receipt parseInputs(List<Input> input,int imageWidth,int imageHeight){
+        ReceiptFiscal.mergeHeadings(input);
         Receipt r=new Receipt();r.analysisMode=imageWidth>0?"POSITIONED":"TEXT";boolean net=false,gross=false;int dateIndex=-1;
         for(int i=0;i<input.size();i++){
             String s=normal(input.get(i).text);if(declaration(s)){net|=basis(s)==AmountBasis.EXCLUSIVE;gross|=basis(s)==AmountBasis.INCLUSIVE;}
             if(dateIndex<0&&validDate(s))dateIndex=i;
         }
-        if(net!=gross)r.amountBasis=net?AmountBasis.EXCLUSIVE:AmountBasis.INCLUSIVE;
-        if(net&&gross)warn(r,"税込・税抜表示が競合して未確定です。");r.includesTax=r.amountBasis==AmountBasis.INCLUSIVE;
+        if(net!=gross){r.amountBasis=net?AmountBasis.EXCLUSIVE:AmountBasis.INCLUSIVE;r.basisSource=ValueSource.PRINTED;}
+        if(net&&gross){r.basisConflict=true;warn(r,"税込・税抜表示が競合して未確定です。");}r.includesTax=r.amountBasis==AmountBasis.INCLUSIVE;
+        ReceiptFiscal fiscal=new ReceiptFiscal(r);boolean dailyReport=ReceiptFiscal.dailyReport(input);
         boolean hasHeader=headerPosition(input,dateIndex,imageHeight);
         Pending pending=null;int gap=0,active=-1;ReceiptLayout.Row activeRow=null;String waitingCode="",waitingCodeRaw="";int codeIndex=-10;
         boolean afterTotal=false,dateConflict=false,storeConflict=false,totalConflict=false,subtotalConflict=false;
         for(int index=0;index<input.size();index++){
             Input in=input.get(index);String source=in.text;
+            if(in.fiscalValue){in.finalKind=Kind.HELD;in.reason="FISCAL_VALUE_BOUND";in.fiscal.total=ReceiptDiagnostics.TotalStop.VALUE_BOUND;in.fiscal.binding=ReceiptDiagnostics.Binding.CONSUMED;continue;}
             if(in.row!=null&&!source.equals(in.row.text))r.lines.add(new Line(Kind.MANAGEMENT,in.row.text));
             if(index-codeIndex>3){waitingCode="";waitingCodeRaw="";}
             if(source.isEmpty()&&!in.code.isEmpty()){waitingCode=in.code;waitingCodeRaw=in.row.text;codeIndex=index;in.finalKind=Kind.MANAGEMENT;in.reason="STANDALONE_CODE_REVIEW";continue;}
-            if(source.length()>240){in.reason="INPUT_LIMIT_HELD";pending=null;active=-1;warn(r,"長すぎる行を除外しました。");continue;}
+            if(source.length()>240){in.fiscal.total=ReceiptDiagnostics.TotalStop.INPUT_LIMIT;in.reason="INPUT_LIMIT_HELD";pending=null;active=-1;warn(r,"長すぎる行を除外しました。");continue;}
             String s=normal(source);if(s.isEmpty()){if(++gap>2){pending=null;active=-1;}continue;}
             Kind k=kind(s);
+            if(fiscal.continuation(s,index,in.row))k=Kind.TAX;
             Amount positionedAmount=amount(s);
-            String heading=positionedAmount==null?s:positionedAmount.name;
-            in.evidence="dateAnchor="+(dateIndex<0?"none":dateIndex+1)+"; headerAnchor="+hasHeader+"; aboveDate="+(dateIndex>=0&&index<dateIndex)+"; adminSignals="+adminSignals(s)+"; identifierShape="+identifierShape(s)+"; smallHeading="+compact(heading).startsWith("小")+"; countHint="+(summaryCount(heading)!=null)+"; amountColumn="+amountColumn(input,index,imageWidth)+"; sumMatches="+(positionedAmount!=null&&positionedAmount.value!=null&&positionedAmount.value==r.itemSum())+"; futureSummary="+futureSummary(input,index)+"; itemsBefore="+r.items.size()+"; labelKind="+k;
+            in.fiscal.money=positionedAmount!=null&&positionedAmount.value!=null?ReceiptDiagnostics.MoneyToken.OBSERVED:s.matches(".*[0-9].*")?ReceiptDiagnostics.MoneyToken.INVALID:ReceiptDiagnostics.MoneyToken.MISSING;
+            in.fiscal.grammar=ReceiptDiagnostics.result(ReceiptFiscal.numericGrammar(s));
+            in.fiscal.heading=k==Kind.TOTAL?(exactKind(s)==Kind.TOTAL?ReceiptDiagnostics.FiscalHeading.TOTAL:ReceiptDiagnostics.FiscalHeading.TOTAL_VARIANT):k==Kind.TAX?ReceiptDiagnostics.FiscalHeading.TAX:positionedAmount!=null&&ReceiptFiscal.extendedHeading(positionedAmount.name)||ReceiptFiscal.extendedHeading(s)?ReceiptDiagnostics.FiscalHeading.EXTENDED_TOTAL:positionedAmount!=null&&ReceiptFiscal.shortTotalShape(positionedAmount.name)?ReceiptDiagnostics.FiscalHeading.SHORT_SHAPE:ReceiptDiagnostics.FiscalHeading.OTHER;
+            in.fiscal.total=in.fiscal.heading==ReceiptDiagnostics.FiscalHeading.EXTENDED_TOTAL&&in.fiscal.money!=ReceiptDiagnostics.MoneyToken.OBSERVED?ReceiptDiagnostics.TotalStop.AMOUNT_MISSING:ReceiptDiagnostics.TotalStop.NOT_A_TOTAL;
+            if(in.fiscal.binding==ReceiptDiagnostics.Binding.NOT_ATTEMPTED&&positionedAmount!=null)in.fiscal.binding=ReceiptDiagnostics.Binding.INLINE;
+            in.evidence="dateAnchor="+(dateIndex<0?"none":dateIndex+1)+"; headerAnchor="+hasHeader+"; aboveDate="+(dateIndex>=0&&index<dateIndex)+"; adminSignals="+adminSignals(s)+"; identifierShape="+identifierShape(s)+"; labelKind="+k;
 
             if(hasHeader&&index<dateIndex&&positionedAmount!=null&&positionedAmount.value!=null&&positionedAmount.value>0&&k==Kind.OTHER){
                 in.finalKind=adminSignals(s)>0||identifierShape(s)?Kind.MANAGEMENT:Kind.HELD;
@@ -392,11 +467,38 @@ public final class ReceiptParser {
             if(k==Kind.OTHER&&adminSignals(s)>=2&&identifierShape(s)){
                 in.finalKind=Kind.HELD;in.reason="MULTIPLE_ADMIN_SIGNALS_HELD";r.lines.add(new Line(Kind.HELD,source));pending=null;active=-1;continue;
             }
-            if(k==Kind.OTHER&&!afterTotal&&structuralSubtotal(input,index,r,imageWidth))k=Kind.SUBTOTAL;
-            if(in.holdBoundary){afterTotal=true;pending=null;active=-1;in.finalKind=Kind.HELD;r.lines.add(new Line(Kind.HELD,source));continue;}
+            boolean knownTotal=positionedAmount!=null&&ReceiptFiscal.extendedHeading(positionedAmount.name);
+            boolean shapedTotal=positionedAmount!=null&&ReceiptFiscal.shortTotalShape(positionedAmount.name);
+            if(positionedAmount!=null&&positionedAmount.value!=null&&(k==Kind.OTHER&&(knownTotal||shapedTotal)||k==Kind.TOTAL&&in.row!=null&&in.row.uncertain)){
+                boolean payment=false;for(int next=index+1;next<Math.min(input.size(),index+5);next++)payment|=exactKind(normal(input.get(next).text))==Kind.PAYMENT;
+                Long observedTax=fiscal.observedTaxSum();
+                boolean math=!r.hasDiscount&&(r.amountBasis==AmountBasis.INCLUSIVE?positionedAmount.value==r.itemSum():r.amountBasis==AmountBasis.EXCLUSIVE&&observedTax!=null&&positionedAmount.value==r.itemSum()+observedTax);
+                boolean column=in.row==null||amountColumn(input,index,imageWidth);
+                boolean boundary=r.subtotal!=null||!r.heldItems.isEmpty()||r.lines.stream().anyMatch(line->line.kind==Kind.TAX&&!declaration(normal(line.raw)))||r.items.size()>=2&&payment&&math;
+                in.fiscal.boundary=ReceiptDiagnostics.result(boundary);in.fiscal.column=ReceiptDiagnostics.result(column);in.fiscal.sum=ReceiptDiagnostics.result(math);in.fiscal.payment=ReceiptDiagnostics.result(payment);
+                if(dailyReport){in.fiscal.total=ReceiptDiagnostics.TotalStop.DAILY_REPORT;in.finalKind=Kind.MANAGEMENT;in.reason="DAILY_REPORT_HELD";r.lines.add(new Line(Kind.MANAGEMENT,source));pending=null;active=-1;continue;}
+                boolean structuralOnly=!knownTotal&&k!=Kind.TOTAL;
+                in.fiscal.total=r.items.isEmpty()?ReceiptDiagnostics.TotalStop.NO_GOODS:!boundary?ReceiptDiagnostics.TotalStop.NO_BOUNDARY:ReceiptDiagnostics.TotalStop.STRUCTURE_REJECTED;
+                if(!r.items.isEmpty()&&boundary&&(!structuralOnly||math&&column&&payment)){
+                    boolean uncertain=in.row!=null&&in.row.uncertain;
+                    Candidate totalCandidate=candidate(r,positionedAmount.name,positionedAmount.value,in.row==null?s:in.row.text,null,null,null,positionedAmount.markers,positionedAmount.basis==AmountBasis.UNKNOWN?r.amountBasis:positionedAmount.basis,uncertain);
+                    if(r.heldItems.size()<80)r.heldItems.add(new HeldItem(totalCandidate,null,true,Kind.TOTAL));
+                    in.finalKind=Kind.HELD;in.reason=uncertain?"TOTAL_LAYOUT_REVIEW":structuralOnly?"TOTAL_STRUCTURE_REVIEW":math&&payment&&column?"TOTAL_CONTEXT_MATCHED_REVIEW":"TOTAL_CANDIDATE_REVIEW";
+                    in.fiscal.total=uncertain?ReceiptDiagnostics.TotalStop.LAYOUT_CANDIDATE:structuralOnly?ReceiptDiagnostics.TotalStop.STRUCTURAL_CANDIDATE:ReceiptDiagnostics.TotalStop.CANDIDATE;
+                    r.lines.add(new Line(Kind.HELD,source));pending=null;active=-1;continue;
+                }
+            }
+            if(structuralSubtotal(input,index,r,imageWidth,k,afterTotal))k=Kind.SUBTOTAL;
+            if(in.reviewSummary||in.holdBoundary){
+                Amount held=amount(s);
+                if(held!=null&&held.value!=null&&held.value>0&&held.name.length()<=120&&r.heldItems.size()<80)
+                    r.heldItems.add(new HeldItem(candidate(r,held.name,held.value,in.row==null?s:in.row.text,null,null,null,held.markers,held.basis==AmountBasis.UNKNOWN?r.amountBasis:held.basis,false),in.structuralCount));
+                if(in.reviewSummary){in.finalKind=Kind.HELD;r.lines.add(new Line(Kind.HELD,source));pending=null;active=-1;continue;}
+            }
+            if(in.holdBoundary){pending=null;active=-1;in.finalKind=Kind.HELD;r.lines.add(new Line(Kind.HELD,source));continue;}
             if(k==Kind.MANAGEMENT){in.finalKind=k;in.reason="ADMIN_LABEL_STRUCTURE";waitingCode="";waitingCodeRaw="";pending=null;active=-1;r.lines.add(new Line(k,in.row==null?s:in.row.text));continue;}
             if((k==Kind.SUBTOTAL||k==Kind.TOTAL)&&exactKind(s)==Kind.OTHER&&!summaryEvidence(input,index,r,s))k=Kind.OTHER;
-            if(in.row!=null&&in.row.uncertain){in.finalKind=Kind.HELD;in.reason="OVERLAPPING_REGIONS_HELD";pending=null;active=-1;if(k==Kind.SUBTOTAL||k==Kind.TOTAL)afterTotal=true;r.lines.add(new Line(k,s));warn(r,"重なり・行位置が曖昧な領域は商品へ結合しませんでした。");continue;}
+            if(in.row!=null&&in.row.uncertain){in.finalKind=Kind.HELD;in.reason="OVERLAPPING_REGIONS_HELD";pending=null;active=-1;if(k==Kind.TAX)fiscal.tax(s,index,true,in.row,in.fiscal);if(k==Kind.SUBTOTAL||k==Kind.TOTAL){afterTotal=true;in.fiscal.total=ReceiptDiagnostics.TotalStop.LAYOUT_HELD;}r.lines.add(new Line(k,s));warn(r,"重なり・行位置が曖昧な領域は商品へ結合しませんでした。");continue;}
             Matcher date=DATE.matcher(s);
             if(date.find()){
                 in.finalKind=Kind.DATE;in.reason="DATE_VALIDATION";
@@ -417,22 +519,53 @@ public final class ReceiptParser {
                 r.lines.add(new Line(Kind.STORE,s));pending=null;active=-1;gap=0;continue;
             }
             if(declaration(s)){in.finalKind=Kind.TAX;in.reason="PRICE_BASIS_DECLARATION";waitingCode="";waitingCodeRaw="";r.lines.add(new Line(Kind.TAX,s));pending=null;active=-1;continue;}
+            if(weightDetail(s)&&!afterTotal){
+                in.finalKind=Kind.QUANTITY;in.reason="WEIGHT_DETAIL_REVIEW";
+                if(active>=0&&ReceiptLayout.adjacent(activeRow,in.row)){
+                    Candidate old=r.items.get(active);Candidate next=candidate(r,old.name,old.price,old.raw+"\n"+s,old.quantity,old.unitPrice,old.taxRate,old.markers,old.amountBasis,old.uncertainLayout);
+                    next.managementCode=old.managementCode;next.codeUncertain=old.codeUncertain;r.items.set(active,next);in.directCandidate=active+1;
+                }
+                r.lines.add(new Line(Kind.QUANTITY,s));pending=null;active=-1;continue;
+            }
             if(k==Kind.QUANTITY&&!afterTotal&&(pending!=null||active>=0)&&amount(s)!=null)k=Kind.OTHER;
             Detail d=detail(s);
-            if(d!=null&&!afterTotal&&(k==Kind.OTHER||k==Kind.QUANTITY)){
+            boolean pendingEquation=d!=null&&d.total!=null&&!d.invalidTotal&&pending!=null&&gap<=2&&ReceiptLayout.adjacent(pending.row,in.row);
+            if(d!=null&&!pendingEquation&&!afterTotal&&(k==Kind.OTHER||k==Kind.QUANTITY)){
+                in.extraction=d.unit!=null&&d.quantity!=null?ReceiptDiagnostics.Extraction.PAIR:d.unit!=null?ReceiptDiagnostics.Extraction.UNIT_ONLY:ReceiptDiagnostics.Extraction.COUNT_ONLY;
                 boolean attached=false;in.finalKind=Kind.QUANTITY;in.reason="UNIT_QUANTITY_UNBOUND";
-                if(pending!=null&&gap<=2&&ReceiptLayout.adjacent(pending.row,in.row)){
-                    if(pending.quantity!=null&&!pending.quantity.equals(d.quantity)||pending.unit!=null&&d.unit!=null&&!pending.unit.equals(d.unit)){warn(r,"隣接する単価・数量が競合しています。");pending=null;}
-                    else{pending.quantity=d.quantity;if(d.unit!=null)pending.unit=d.unit;pending.raw+="\n"+s;pending.row=in.row;attached=true;}
+                if(pending!=null&&d.total==null&&!d.invalidTotal&&gap<=2&&ReceiptLayout.adjacent(pending.row,in.row)){
+                    if(d.quantity!=null&&pending.quantity!=null&&!pending.quantity.equals(d.quantity)||pending.unit!=null&&d.unit!=null&&!pending.unit.equals(d.unit)){in.association=ReceiptDiagnostics.Association.FIELD_CONFLICT;in.reason="UNIT_QUANTITY_FIELD_CONFLICT";warn(r,"隣接する単価・数量が競合しています。");pending=null;}
+                    else{if(d.quantity!=null)pending.quantity=d.quantity;if(d.unit!=null)pending.unit=d.unit;pending.raw+="\n"+s;pending.row=in.row;attached=true;}
                 }else if(active>=0&&gap==0&&ReceiptLayout.adjacent(activeRow,in.row)){
-                    Candidate old=r.items.get(active);
-                    if(d.unit==null&&(old.unitPrice==null||old.unitPrice*d.quantity!=old.price)||d.unit!=null&&d.quantity!=null&&d.unit*d.quantity!=old.price){in.reason="UNIT_QUANTITY_AMOUNT_MISMATCH";warn(r,"隣接する単価×数量が行金額と一致せず、流用しませんでした。");r.lines.add(new Line(Kind.QUANTITY,s));active=-1;gap=0;continue;}
-                    in.directCandidate=active+1;boolean conflict=old.quantity!=null&&!old.quantity.equals(d.quantity)||old.unitPrice!=null&&d.unit!=null&&!old.unitPrice.equals(d.unit);
-                    if(conflict)warn(r,"隣接する単価・数量が競合しています。");
-                    Candidate updated=candidate(r,old.name,old.price,old.raw+"\n"+s,conflict?null:d.quantity,conflict?null:d.unit==null?old.unitPrice:d.unit,old.taxRate,old.markers,old.amountBasis,old.uncertainLayout||conflict);updated.managementCode=old.managementCode;updated.codeUncertain=old.codeUncertain;r.items.set(active,updated);activeRow=in.row;attached=true;if(conflict)active=-1;
-                }else warn(r,"結び付く商品がない単価・数量行を除外しました。");
-                if(attached){in.finalKind=Kind.ITEM_DETAIL;in.reason="UNIT_QUANTITY_BOUND_TO_ITEM";}
+                    Candidate old=r.items.get(active);in.attemptedCandidate=active+1;
+                    Integer mergedQuantity=d.quantity==null?old.quantity:d.quantity;
+                    Long mergedUnit=d.unit==null?old.unitPrice:d.unit;
+                    if(d.unit==null&&!d.explicitCount&&old.unitPrice==null){
+                        in.association=ReceiptDiagnostics.Association.BARE_COUNT_UNPROVEN;in.reason="BARE_COUNT_UNPROVEN";
+                        r.lines.add(new Line(Kind.QUANTITY,s));active=-1;gap=0;continue;
+                    }
+                    if(d.invalidTotal||d.total!=null&&d.total!=old.price||d.unit==null&&!d.explicitCount&&(old.unitPrice==null||old.unitPrice*d.quantity!=old.price)||mergedUnit!=null&&mergedQuantity!=null&&mergedUnit*mergedQuantity!=old.price){in.association=ReceiptDiagnostics.Association.AMOUNT_MISMATCH;in.reason="UNIT_QUANTITY_AMOUNT_MISMATCH";warn(r,"隣接する単価×数量が行金額と一致せず、流用しませんでした。");r.lines.add(new Line(Kind.QUANTITY,s));active=-1;gap=0;continue;}
+                    in.directCandidate=active+1;boolean conflict=d.quantity!=null&&old.quantity!=null&&!old.quantity.equals(d.quantity)||old.unitPrice!=null&&d.unit!=null&&!old.unitPrice.equals(d.unit);
+                    if(conflict){in.association=ReceiptDiagnostics.Association.FIELD_CONFLICT;warn(r,"隣接する単価・数量が競合しています。");}
+                    Candidate updated=candidate(r,old.name,old.price,old.raw+"\n"+s,conflict?null:mergedQuantity,conflict?null:mergedUnit,old.taxRate,old.markers,old.amountBasis,old.uncertainLayout||conflict);updated.managementCode=old.managementCode;updated.codeUncertain=old.codeUncertain;r.items.set(active,updated);activeRow=in.row;attached=true;if(conflict)active=-1;
+                }else{
+                    in.attemptedCandidate=active<0?null:active+1;
+                    in.association=active>=0||pending!=null?ReceiptDiagnostics.Association.GEOMETRY_REJECTED:ReceiptDiagnostics.Association.NO_TARGET;
+                    in.reason=in.association==ReceiptDiagnostics.Association.GEOMETRY_REJECTED?"UNIT_QUANTITY_GEOMETRY_REJECTED":"UNIT_QUANTITY_NO_TARGET";
+                    warn(r,"結び付く商品がない単価・数量行を除外しました。");pending=null;active=-1;
+                }
+                if(attached){in.finalKind=Kind.ITEM_DETAIL;in.reason="UNIT_QUANTITY_BOUND_TO_ITEM";
+                    if(in.association!=ReceiptDiagnostics.Association.FIELD_CONFLICT)in.association=ReceiptDiagnostics.Association.BOUND;
+                    else in.reason="UNIT_QUANTITY_FIELD_CONFLICT";
+                }
                 r.lines.add(new Line(attached?Kind.ITEM_DETAIL:Kind.QUANTITY,s));gap=0;continue;
+            }
+            if(k==Kind.SUBTOTAL&&exactKind(s)==Kind.OTHER&&!in.structural){
+                Amount fuzzy=amount(s);
+                if(fuzzy!=null&&fuzzy.value!=null&&fuzzy.value>0&&r.heldItems.size()<80){
+                    r.heldItems.add(new HeldItem(candidate(r,fuzzy.name,fuzzy.value,in.row==null?s:in.row.text,null,null,null,fuzzy.markers,fuzzy.basis==AmountBasis.UNKNOWN?r.amountBasis:fuzzy.basis,false),summaryCount(fuzzy.name),true));
+                    in.structural=true;in.reason="FUZZY_SUMMARY_REVIEW";
+                }
             }
             if(k!=Kind.OTHER){
                 in.finalKind=k;if(!in.structural)in.reason="LABEL_"+k.name();
@@ -440,28 +573,41 @@ public final class ReceiptParser {
                 r.lines.add(new Line(k,s));pending=null;active=-1;gap=0;Long n=lastAmount(s);
                 if(exactKind(s)==Kind.OTHER)warn(r,"集計・支払見出しのOCR表記揺れを検出しました。原文を確認してください。");
                 if(k==Kind.TOTAL){
+                    in.fiscal.total=n==null?ReceiptDiagnostics.TotalStop.AMOUNT_MISSING:ReceiptDiagnostics.TotalStop.OBSERVED;
                     r.totalUncertain|=exactKind(s)==Kind.OTHER;
+                    if(n!=null&&!r.totalCandidates.contains(n)&&r.totalCandidates.size()<80)r.totalCandidates.add(n);
                     if(n!=null){if(r.total!=null&&!r.total.equals(n))totalConflict=true;if(!totalConflict)r.total=n;}
                     afterTotal=true;
                 }
-                if(k==Kind.SUBTOTAL){if(in.structuralCount!=null)r.printedItemCount=in.structuralCount;Matcher points=Pattern.compile("(?<![0-9])([0-9]{1,3})(?:点|個)").matcher(compact(s));if(points.find()){Integer v=count(points.group(1));if(r.printedItemCount!=null&&!r.printedItemCount.equals(v)){r.printedItemCount=null;warn(r,"購入点数が競合して未確定です。");}else if(!r.warnings.contains("購入点数が競合して未確定です。"))r.printedItemCount=v;}afterTotal=true;r.subtotalUncertain|=in.structural||exactKind(s)==Kind.OTHER;if(n!=null){if(r.subtotal!=null&&!r.subtotal.equals(n))subtotalConflict=true;if(!subtotalConflict)r.subtotal=n;}}
-                if(k==Kind.COUNT_TOTAL){Matcher q=Pattern.compile("(?<![0-9])([0-9]{1,3})\\s*(?:点|個)?$").matcher(s);if(q.find()){Integer v=count(q.group(1));if(r.printedItemCount!=null&&!r.printedItemCount.equals(v)){r.printedItemCount=null;warn(r,"購入点数が競合して未確定です。");}else if(!r.warnings.contains("購入点数が競合して未確定です。"))r.printedItemCount=v;}}
-                if(k==Kind.TAX){tax(r,s);if(!r.items.isEmpty()&&n!=null&&!declaration(s)){afterTotal=true;in.reason="MONETARY_TAX_FOOTER_BOUNDARY";}}if(k==Kind.DISCOUNT)r.hasDiscount=true;continue;
+                if(k==Kind.SUBTOTAL){if(in.structuralCount!=null)r.printedItemCount=in.structuralCount;Matcher points=Pattern.compile("(?<![0-9])([0-9]{1,3})(?:点|個)").matcher(compact(s));if(points.find()){Integer v=count(points.group(1));if(r.printedItemCount!=null&&!r.printedItemCount.equals(v)){r.printedItemCount=null;warn(r,"購入点数が競合して未確定です。");}else if(!r.warnings.contains("購入点数が競合して未確定です。"))r.printedItemCount=v;}afterTotal=!in.structural;r.subtotalUncertain|=in.structural||exactKind(s)==Kind.OTHER;if(n!=null){if(r.subtotal!=null&&!r.subtotal.equals(n))subtotalConflict=true;if(!subtotalConflict)r.subtotal=n;}}
+                if(k==Kind.COUNT_TOTAL){Matcher q=Pattern.compile("(?<![0-9])([0-9]{1,3})\\s*(?:点|個)?$").matcher(s);if(q.find()){Integer v=count(q.group(1));if(v!=null)r.countFromExplicitTotal=true;if(r.printedItemCount!=null&&!r.printedItemCount.equals(v)){r.printedItemCount=null;warn(r,"購入点数が競合して未確定です。");}else if(!r.warnings.contains("購入点数が競合して未確定です。"))r.printedItemCount=v;}}
+                if(k==Kind.TAX){fiscal.tax(s,index,false,in.row,in.fiscal);if(!r.items.isEmpty()&&n!=null&&!declaration(s)){afterTotal=true;in.reason="MONETARY_TAX_FOOTER_BOUNDARY";}}if(k==Kind.DISCOUNT)r.hasDiscount=true;continue;
             }
-            if(afterTotal){in.finalKind=Kind.HELD;in.reason="AFTER_SUMMARY_HELD";r.lines.add(new Line(Kind.OTHER,s));continue;}
+            if(afterTotal){if(in.fiscal.total==ReceiptDiagnostics.TotalStop.NOT_A_TOTAL&&positionedAmount!=null)in.fiscal.total=ReceiptDiagnostics.TotalStop.HEADING_REJECTED;in.finalKind=Kind.HELD;in.reason="AFTER_SUMMARY_HELD";r.lines.add(new Line(Kind.OTHER,s));continue;}
             if(s.matches(".*\\s-\\s*[¥]?"+MONEY+".*")){in.finalKind=Kind.DISCOUNT;in.reason="NEGATIVE_ADJUSTMENT";pending=null;active=-1;r.hasDiscount=true;r.lines.add(new Line(Kind.DISCOUNT,s));warn(r,"負の金額らしい行を除外しました。値引等の配分は未確定です。");continue;}
             Amount a=amount(s);
             if(a!=null){
                 String name=a.name;Integer qty=null;Long unit=null;String raw=in.row==null?s:in.row.text;boolean uncertain=false;
                 Matcher u=UNIT.matcher(name);
-                if(u.find()){unit=money(u.group(1));qty=count(u.group(2));name=(name.substring(0,u.start())+name.substring(u.end())).trim();}
-                Detail prefix=detail(name);if(prefix!=null){qty=prefix.quantity;unit=prefix.unit;name="";}
+                if(u.find()){
+                    unit=money(u.group(1));qty=count(u.group(2));
+                    String tail=name.substring(u.end()).trim();
+                    name=(name.substring(0,u.start())+(tail.equals("=")?"":name.substring(u.end()))).trim();
+                }else{
+                    Detail column=middleColumnDetail(name,in.row);
+                    if(column!=null){unit=column.unit;qty=column.quantity;name=name.substring(0,name.length()-column.expression.length()).trim();}
+                }
+                Detail prefix=detail(name.endsWith("=")?name.substring(0,name.length()-1).trim():name);if(prefix!=null){qty=prefix.quantity;unit=prefix.unit;name="";}
                 Matcher q=COUNT_PREFIX.matcher(name);if(q.find()){qty=count(q.group(1));name=name.substring(q.end()).trim();}
                 Matcher named=NAMED_UNIT.matcher(name);if(named.find()){unit=money(named.group(1));name=(name.substring(0,named.start())+name.substring(named.end())).trim();}
                 boolean close=pending!=null&&ReceiptLayout.adjacent(pending.row,in.row);
                 if(close&&(gap==0||qty!=null||unit!=null||pending.quantity!=null)){
                     boolean spec=specification(name);
-                    boolean wrap=in.row!=null&&pending.row!=null&&ReceiptLayout.alignedName(pending.row,in.row,imageWidth)&&productName(name);
+                    // A following row with its own name, unit, count and amount can stand alone.
+                    // Do not prepend a previous product whose amount was lost by OCR.
+                    boolean explicitPair=qty!=null&&unit!=null;
+                    boolean wrap=!explicitPair&&in.row!=null&&pending.row!=null&&ReceiptLayout.alignedName(pending.row,in.row,imageWidth)&&productName(name);
+                    if(explicitPair&&!spec&&!name.isEmpty())warn(r,"直前の商品名らしい行は金額不明のため結合しませんでした。認識漏れを確認してください。");
                     if(name.isEmpty()||spec||wrap){
                         uncertain=pending.uncertain||wrap&&!spec&&!name.isEmpty();name=pending.name+(name.isEmpty()?"":" "+name);raw=pending.raw+"\n"+s;
                         if(qty!=null&&pending.quantity!=null&&!qty.equals(pending.quantity)||unit!=null&&pending.unit!=null&&!unit.equals(pending.unit)){qty=null;unit=null;uncertain=true;warn(r,"隣接する単価・数量が競合しています。");}
@@ -476,7 +622,8 @@ public final class ReceiptParser {
                 if(a.value!=null&&a.value>0&&productName(name)&&r.items.size()<80){
                     if(a.rateUncertain)warn(r,"同一明細に異なる税率があり未確定です。");
                     AmountBasis b=a.basis==AmountBasis.UNKNOWN?r.amountBasis:a.basis;
-                    Candidate item=candidate(r,name,a.value,raw,qty,unit,a.rate,a.markers,b,uncertain);item.managementCode=in.code.isEmpty()?waitingCode:in.code;item.codeUncertain=in.codeUncertain||!waitingCode.isEmpty();if(!waitingCodeRaw.isEmpty())item=codedCandidate(item,waitingCodeRaw);waitingCode="";waitingCodeRaw="";r.items.add(item);in.directCandidate=r.items.size();in.finalKind=Kind.ITEM;in.reason=imageWidth>0?"ITEM_POSITIONED_AMOUNT":"ITEM_TEXT_AMOUNT";r.lines.add(new Line(Kind.ITEM,raw));
+                    in.extraction=qty!=null&&unit!=null?ReceiptDiagnostics.Extraction.PAIR:unit!=null?ReceiptDiagnostics.Extraction.UNIT_ONLY:qty!=null?ReceiptDiagnostics.Extraction.COUNT_ONLY:ReceiptDiagnostics.Extraction.NONE;
+                    Candidate item=candidate(r,name,a.value,raw,qty,unit,a.rate,a.markers,b,uncertain);item.managementCode=in.code.isEmpty()?waitingCode:in.code;item.codeUncertain=in.codeUncertain||!waitingCode.isEmpty();if(!waitingCodeRaw.isEmpty())item=codedCandidate(item,waitingCodeRaw);waitingCode="";waitingCodeRaw="";r.items.add(item);if(qty!=null||unit!=null)in.association=item.quantity!=null||item.unitPrice!=null?ReceiptDiagnostics.Association.INLINE_BOUND:ReceiptDiagnostics.Association.AMOUNT_MISMATCH;in.directCandidate=r.items.size();in.finalKind=Kind.ITEM;in.reason=imageWidth>0?"ITEM_POSITIONED_AMOUNT":"ITEM_TEXT_AMOUNT";r.lines.add(new Line(Kind.ITEM,raw));
                     pending=null;active=r.items.size()-1;activeRow=in.row;gap=0;continue;
                 }
             }
@@ -490,12 +637,20 @@ public final class ReceiptParser {
         }
         if(dateConflict){r.date="";warn(r,"日付に矛盾があるため未確定です。");}
         if(storeConflict){r.store="";warn(r,"店名候補が複数あり未確定です。");}
-        if(totalConflict){r.total=null;warn(r,"異なる総額があり未確定です。");}if(subtotalConflict){r.subtotal=null;warn(r,"異なる小計があり未確定です。");}
+        if(totalConflict){r.total=null;r.totalUncertain=true;warn(r,"異なる総額があり未確定です。");}if(subtotalConflict){r.subtotal=null;warn(r,"異なる小計があり未確定です。");}
         if(r.subtotalUncertain||r.totalUncertain)warn(r,"小計・合計の見出しにOCR表記揺れがあります。元の画像で確認してください。");
-        if(r.taxAmount==null&&!r.taxBreakdowns.isEmpty()&&!r.warnings.contains("税額合計が競合して未確定です。")){
-            long sum=0;boolean known=true;for(TaxBreakdown b:r.taxBreakdowns){known&=b.tax!=null&&!b.uncertain;if(b.tax!=null)sum+=b.tax;}
-            if(known){r.taxAmount=sum;r.taxAmountFromBreakdown=true;}
+        ReceiptFiscalRecovery.apply(r,input,imageWidth,dailyReport);
+        fiscal.finish();
+        if(dailyReport){r.total=null;r.totalCandidates.clear();r.totalUncertain=true;}
+        if(r.total!=null){
+            boolean arithmetic=r.amountBasis==AmountBasis.INCLUSIVE?r.total==r.itemSum():r.amountBasis==AmountBasis.EXCLUSIVE&&r.taxAmount!=null&&r.total==r.itemSum()+r.taxAmount;
+            r.totalUncertain|=!arithmetic||r.hasDiscount||r.items.isEmpty();
         }
+        r.totalResult=r.total!=null?(r.totalUncertain?ReceiptDiagnostics.FiscalResult.CANDIDATE:ReceiptDiagnostics.FiscalResult.OBSERVED):r.heldItems.stream().anyMatch(h->h.aggregateKind==Kind.TOTAL)?ReceiptDiagnostics.FiscalResult.CANDIDATE:!r.totalCandidates.isEmpty()?ReceiptDiagnostics.FiscalResult.CONFLICT:ReceiptDiagnostics.FiscalResult.NOT_OBTAINED;
+        r.taxResult=r.taxConflict?ReceiptDiagnostics.FiscalResult.CONFLICT:r.taxAmount!=null?(r.taxAmountUncertain?ReceiptDiagnostics.FiscalResult.CANDIDATE:ReceiptDiagnostics.FiscalResult.OBSERVED):r.taxDetailsPending?ReceiptDiagnostics.FiscalResult.NEEDS_REVIEW:ReceiptDiagnostics.FiscalResult.NOT_OBTAINED;
+        r.subtotalResult=r.subtotal!=null?(r.subtotalUncertain?ReceiptDiagnostics.FiscalResult.CANDIDATE:ReceiptDiagnostics.FiscalResult.OBSERVED):r.heldItems.stream().anyMatch(h->h.aggregateKind==Kind.SUBTOTAL)?ReceiptDiagnostics.FiscalResult.CANDIDATE:ReceiptDiagnostics.FiscalResult.NOT_OBTAINED;
+        boolean anyBase=r.taxBreakdowns.stream().anyMatch(b->b.base!=null||!b.baseAlternatives.isEmpty()),allBases=!r.taxBreakdowns.isEmpty()&&r.taxBreakdowns.stream().allMatch(b->b.base!=null&&b.baseAlternatives.isEmpty());
+        r.baseResult=!anyBase?ReceiptDiagnostics.FiscalResult.NOT_OBTAINED:r.taxConflict?ReceiptDiagnostics.FiscalResult.CONFLICT:allBases?(r.taxBreakdowns.stream().anyMatch(b->b.uncertain||b.baseSource==ValueSource.PROPOSED)?ReceiptDiagnostics.FiscalResult.CANDIDATE:ReceiptDiagnostics.FiscalResult.OBSERVED):ReceiptDiagnostics.FiscalResult.NEEDS_REVIEW;
         if(r.items.size()==80)warn(r,"候補は80件までです。認識漏れを確認してください。");return traced(r,input);
     }
 }

@@ -34,7 +34,7 @@ public final class OfflineOcrInstrumentation extends Instrumentation {
                 android.content.pm.ActivityInfo info=getTargetContext().getPackageManager().getActivityInfo(intent.getComponent(),0);
                 activity=(MainActivity)newActivity(MainActivity.class,isolated,null,(android.app.Application)getTargetContext().getApplicationContext(),intent,info,"synthetic",null,null,null);
                 callActivityOnCreate(activity,null);
-                ReceiptReview model=new ReceiptReview(receipt);
+                ReceiptReview model=new ReceiptReview(receipt);model.showQuestions=false;
                 java.lang.reflect.Field f=MainActivity.class.getDeclaredField("reviewModel");f.setAccessible(true);f.set(activity,model);
                 for(String name:new String[]{"reviewText","reviewedText"}){f=MainActivity.class.getDeclaredField(name);f.setAccessible(true);f.set(activity,"synthetic UI only");}
                 f=MainActivity.class.getDeclaredField("content");f.setAccessible(true);android.widget.LinearLayout content=(android.widget.LinearLayout)f.get(activity);content.removeAllViews();
@@ -51,13 +51,132 @@ public final class OfflineOcrInstrumentation extends Instrumentation {
         });
         if(failure.get()!=null)throw new IllegalStateException("Synthetic UI failed",failure.get());
     }
+    private android.widget.TextView findLabel(android.view.View view,String part){
+        if(view instanceof android.widget.TextView&&((android.widget.TextView)view).getText().toString().contains(part))return (android.widget.TextView)view;
+        if(view instanceof android.view.ViewGroup){android.view.ViewGroup group=(android.view.ViewGroup)view;for(int i=0;i<group.getChildCount();i++){android.widget.TextView found=findLabel(group.getChildAt(i),part);if(found!=null)return found;}}return null;
+    }
+    private void confirmationUi(Context isolated)throws Exception{
+        java.util.concurrent.atomic.AtomicReference<Throwable> failure=new java.util.concurrent.atomic.AtomicReference<>();
+        runOnMainSync(()->{
+            MainActivity activity=null;
+            try{
+                android.content.Intent intent=new android.content.Intent(getTargetContext(),MainActivity.class);
+                android.content.pm.ActivityInfo info=getTargetContext().getPackageManager().getActivityInfo(intent.getComponent(),0);
+                activity=(MainActivity)newActivity(MainActivity.class,isolated,null,(android.app.Application)getTargetContext().getApplicationContext(),intent,info,"synthetic confirmation",null,null,null);callActivityOnCreate(activity,null);
+                ReceiptReview model=new ReceiptReview(ReceiptConfirmationTest.fixture("小未読",8));
+                java.lang.reflect.Field field=MainActivity.class.getDeclaredField("reviewModel");field.setAccessible(true);field.set(activity,model);
+                for(String name:new String[]{"reviewText","reviewedText"}){field=MainActivity.class.getDeclaredField(name);field.setAccessible(true);field.set(activity,"synthetic confirmation only");}
+                field=MainActivity.class.getDeclaredField("content");field.setAccessible(true);android.widget.LinearLayout content=(android.widget.LinearLayout)field.get(activity);
+                java.lang.reflect.Method render=MainActivity.class.getDeclaredMethod("showOcrReview");render.setAccessible(true);content.removeAllViews();render.invoke(activity);
+                check(visibleText(content).contains("集計か商品か要確認")&&visibleText(content).contains("1点と推定"));
+                check(visibleText(content).contains("79円 × 2点 ＝ 158円")&&visibleText(content).contains("245円 × 2点 ＝ 490円"));
+                check(!visibleText(content).contains("原文：")&&!visibleText(content).contains("検出座標"));
+                findLabel(content,"個別の税込購入単価・税率（必要時）").performClick();
+                ((android.widget.EditText)content.findViewWithTag("batch-gross-0")).setText("200");
+                content.removeAllViews();render.invoke(activity);
+                findLabel(content,"個別の税込購入単価・税率（必要時）").performClick();
+                check(((android.widget.EditText)content.findViewWithTag("batch-gross-0")).getText().toString().equals("200")&&model.items.get(0).grossUnit==null);
+                ((android.widget.EditText)content.findViewWithTag("batch-gross-0")).setText("");
+                findLabel(content,"1点と推定した対象行は").performClick();
+                findLabel(content,"小計・集計として除外").performClick();
+                findLabel(content,"税込単価の入力・税区分をまとめて設定").performClick();
+                findLabel(content,"印字金額は税抜・税率と1点単位端数を確認して換算").performClick();
+                ((android.widget.EditText)content.findViewWithTag("batch-common-rate")).setText("8");
+                findLabel(content,"1点単位で切り捨てと確認").performClick();
+                findLabel(content,"対象行の数量・金額・税区分・集計/商品区分を原票で確認した").performClick();
+                findLabel(content,"確認をまとめて反映（保存は別）").performClick();
+                check(model.held.get(0).choice==ReceiptReview.Choice.SUBTOTAL&&model.items.size()==6);
+                check(model.items.stream().allMatch(i->i.ready()&&i.selected)&&model.items.stream().mapToInt(i->i.quantity).sum()==8);
+                check(model.aggregate().subtotal==2872&&model.items.get(1).printedUnit==79&&model.items.get(3).printedUnit==245);
+                model.showQuestions=true;content=(android.widget.LinearLayout)field.get(activity);content.removeAllViews();render.invoke(activity);
+                findLabel(content,"後で確認・今回保存しない").performClick();
+                try{model.validateSave();throw new AssertionError();}catch(IllegalArgumentException expected){checks++;}
+                findLabel(content,"未反映の入力を破棄して商品一覧へ").performClick();model.validateSave();
+                check(model.batch==null&&model.held.get(0).choice==ReceiptReview.Choice.SUBTOTAL&&model.items.size()==6);
+            }catch(Throwable e){failure.set(e);}finally{if(activity!=null)callActivityOnDestroy(activity);}
+        });
+        if(failure.get()!=null)throw new IllegalStateException("Synthetic inline confirmation UI failed",failure.get());
+    }
     private int visibleEditors(android.view.View view){
         if(view.getVisibility()!=android.view.View.VISIBLE)return 0;int count=view instanceof android.widget.EditText?1:0;
         if(view instanceof android.view.ViewGroup){android.view.ViewGroup group=(android.view.ViewGroup)view;for(int i=0;i<group.getChildCount();i++)count+=visibleEditors(group.getChildAt(i));}return count;
     }
+    private int clickVisibleChecks(android.view.View view,String label){
+        if(view.getVisibility()!=android.view.View.VISIBLE)return 0;
+        if(view instanceof android.widget.CheckBox&&((android.widget.CheckBox)view).getText().toString().equals(label)){view.performClick();return 1;}
+        int n=0;if(view instanceof android.view.ViewGroup){android.view.ViewGroup g=(android.view.ViewGroup)view;for(int i=0;i<g.getChildCount();i++)n+=clickVisibleChecks(g.getChildAt(i),label);}return n;
+    }
+    private void fiscalUi(Context isolated)throws Exception{
+        java.util.concurrent.atomic.AtomicReference<Throwable> failure=new java.util.concurrent.atomic.AtomicReference<>();
+        runOnMainSync(()->{MainActivity activity=null;try{
+            android.content.Intent intent=new android.content.Intent(getTargetContext(),MainActivity.class);
+            android.content.pm.ActivityInfo info=getTargetContext().getPackageManager().getActivityInfo(intent.getComponent(),0);
+            activity=(MainActivity)newActivity(MainActivity.class,isolated,null,(android.app.Application)getTargetContext().getApplicationContext(),intent,info,"synthetic fiscal",null,null,null);callActivityOnCreate(activity,null);
+            ReceiptReview model=new ReceiptReview(ReceiptParser.parseDocument(ReceiptFiscalTest.fixture(true,false)));
+            java.lang.reflect.Field f=MainActivity.class.getDeclaredField("reviewModel");f.setAccessible(true);f.set(activity,model);
+            for(String name:new String[]{"reviewText","reviewedText"}){f=MainActivity.class.getDeclaredField(name);f.setAccessible(true);f.set(activity,"synthetic fiscal only");}
+            f=MainActivity.class.getDeclaredField("content");f.setAccessible(true);android.widget.LinearLayout content=(android.widget.LinearLayout)f.get(activity);
+            java.lang.reflect.Method render=MainActivity.class.getDeclaredMethod("showOcrReview");render.setAccessible(true);content.removeAllViews();render.invoke(activity);
+            check(visibleText(content).contains("税込の最終合計：3140円（要確認）")&&visibleText(content).contains("内訳合算・要確認")&&visibleText(content).contains("照合：未確定"));
+            check(visibleEditors(content)==2);
+            check(findLabel(content,"未取得の集計を匿名診断コピー").performClick());
+            check(model.aggregate().total==null&&model.aggregate().taxAmountUncertain&&model.items.stream().noneMatch(i->i.selected||i.ready()));
+            findLabel(content,"小計・集計として除外").performClick();findLabel(content,"レシートの最終合計として採用").performClick();
+            check(clickVisibleChecks(content,"この商品は後で確認・今回保存しない")==6);
+            findLabel(content,"集計金額・方式の確認と訂正").performClick();findLabel(content,"入力した集計金額・明細の税込税抜を原票で確認して採用").performClick();
+            findLabel(content,"対象行の数量・金額・税区分・集計/商品区分を原票で確認した").performClick();findLabel(content,"確認をまとめて反映（保存は別）").performClick();
+            check(model.aggregate().total==3140&&model.aggregate().taxAmount==268&&model.items.stream().noneMatch(i->i.ready()||i.selected));
+            content=(android.widget.LinearLayout)f.get(activity);content.removeAllViews();render.invoke(activity);
+            check(visibleText(content).contains("照合：一致")&&visibleText(content).contains("レシート小計：2872円"));
+            model.showQuestions=true;content.removeAllViews();render.invoke(activity);((android.widget.EditText)content.findViewWithTag("summary-total")).setText("3130");
+            try{model.validateSave();throw new AssertionError();}catch(IllegalArgumentException expected){checks++;}
+            findLabel(content,"未反映の入力を破棄して商品一覧へ").performClick();check(model.aggregate().total==3140&&model.batch==null);
+        }catch(Throwable e){failure.set(e);}finally{if(activity!=null)callActivityOnDestroy(activity);}});
+        if(failure.get()!=null)throw new IllegalStateException("Synthetic fiscal UI failed",failure.get());
+    }
     private String visibleText(android.view.View view){
         if(view.getVisibility()!=android.view.View.VISIBLE)return "";StringBuilder text=new StringBuilder();if(view instanceof android.widget.TextView)text.append(((android.widget.TextView)view).getText()).append('\n');
         if(view instanceof android.view.ViewGroup){android.view.ViewGroup group=(android.view.ViewGroup)view;for(int i=0;i<group.getChildCount();i++)text.append(visibleText(group.getChildAt(i)));}return text.toString();
+    }
+    private void recoveryResult(ReceiptParser.Receipt receipt){
+        check(receipt.items.size()==6&&receipt.itemSum()==2872);
+        check(receipt.total==null&&receipt.heldItems.stream().anyMatch(h->h.aggregateKind==ReceiptParser.Kind.TOTAL&&h.item.price==3140)&&receipt.heldItems.stream().anyMatch(h->h.aggregateKind==ReceiptParser.Kind.SUBTOTAL));
+        ReceiptParser.TaxBreakdown eight=receipt.taxBreakdowns.stream().filter(b->b.rate==8).findFirst().orElseThrow(),ten=receipt.taxBreakdowns.stream().filter(b->b.rate==10).findFirst().orElseThrow();
+        check(eight.base==960&&eight.tax==77&&eight.itemCount==5&&eight.uncertain);
+        check(ten.base==1912&&ten.tax==191&&ten.itemCount==3&&ten.uncertain);
+        ReceiptReview model=new ReceiptReview(receipt);
+        check(receipt.items.get(1).unitPrice==79&&receipt.items.get(1).quantity==2&&receipt.items.get(3).unitPrice==245&&receipt.items.get(3).quantity==2&&model.items.stream().filter(i->i.quantityState==ReceiptReview.QuantityState.PROVISIONAL_ONE).count()==4&&model.items.stream().noneMatch(i->i.selected||i.grossUnit!=null));
+        String brief=ReceiptDiagnostics.anonymousFiscal(receipt);
+        check(receipt.taxAmount==268&&receipt.taxAmountUncertain&&receipt.taxAmountFromBreakdown&&brief.length()<=7030&&brief.contains("SCOPE=FISCAL_ONLY")&&!brief.contains("架空")&&!brief.contains("3140"));
+    }
+    private void rescueResult(ReceiptParser.Receipt receipt){
+        check(receipt.items.size()==6&&receipt.itemSum()==3000);
+        check(receipt.total==null&&receipt.heldItems.stream().anyMatch(h->h.aggregateKind==ReceiptParser.Kind.TOTAL&&h.item.price==3264)&&receipt.heldItems.stream().anyMatch(h->h.aggregateKind==ReceiptParser.Kind.SUBTOTAL&&h.item.price==3000));
+        ReceiptParser.TaxBreakdown eight=receipt.taxBreakdowns.stream().filter(b->b.rate==8).findFirst().orElseThrow(),ten=receipt.taxBreakdowns.stream().filter(b->b.rate==10).findFirst().orElseThrow();
+        check(eight.base==1800&&eight.tax==144&&eight.itemCount==5&&eight.baseSource==ReceiptParser.ValueSource.PROPOSED&&eight.taxSource==ReceiptParser.ValueSource.PRINTED);
+        check(ten.base==1200&&ten.tax==120&&ten.itemCount==3&&ten.baseSource==ReceiptParser.ValueSource.PROPOSED&&ten.taxSource==ReceiptParser.ValueSource.PRINTED);
+        check(receipt.amountBasis==ReceiptParser.AmountBasis.UNKNOWN&&receipt.basisProposal==ReceiptParser.AmountBasis.EXCLUSIVE&&receipt.basisSource==ReceiptParser.ValueSource.PROPOSED);
+        ReceiptReview model=new ReceiptReview(receipt);check(receipt.items.get(1).unitPrice==91&&receipt.items.get(1).quantity==2&&receipt.items.get(3).unitPrice==315&&receipt.items.get(3).quantity==2&&model.items.stream().filter(i->i.quantityState==ReceiptReview.QuantityState.PROVISIONAL_ONE).count()==4&&model.items.stream().noneMatch(i->i.selected||i.grossUnit!=null));
+        check(model.fiscalStatus().contains("候補値の金額関係は一致")&&model.fiscalStatus().contains("税抜候補・要確認"));
+        String brief=ReceiptDiagnostics.anonymousFiscal(receipt);check(ReceiptFiscalRescueTest.candidateReport(brief)&&!brief.contains("3264")&&!brief.contains("架空"));
+    }
+    private void rescueUi(Context isolated)throws Exception{
+        java.util.concurrent.atomic.AtomicReference<Throwable> failure=new java.util.concurrent.atomic.AtomicReference<>();
+        runOnMainSync(()->{MainActivity activity=null;try{
+            android.content.Intent intent=new android.content.Intent(getTargetContext(),MainActivity.class);android.content.pm.ActivityInfo info=getTargetContext().getPackageManager().getActivityInfo(intent.getComponent(),0);
+            activity=(MainActivity)newActivity(MainActivity.class,isolated,null,(android.app.Application)getTargetContext().getApplicationContext(),intent,info,"synthetic fiscal rescue",null,null,null);callActivityOnCreate(activity,null);
+            ReceiptReview model=new ReceiptReview(ReceiptParser.parseDocument(ReceiptFiscalRescueScenario.fixture(0)));model.showQuestions=false;
+            java.lang.reflect.Field f=MainActivity.class.getDeclaredField("tab");f.setAccessible(true);f.setInt(activity,1);
+            f=MainActivity.class.getDeclaredField("reviewModel");f.setAccessible(true);f.set(activity,model);
+            for(String name:new String[]{"reviewText","reviewedText"}){f=MainActivity.class.getDeclaredField(name);f.setAccessible(true);f.set(activity,"fictional fiscal rescue only");}
+            f=MainActivity.class.getDeclaredField("content");f.setAccessible(true);android.widget.LinearLayout content=(android.widget.LinearLayout)f.get(activity);content.removeAllViews();java.lang.reflect.Method render=MainActivity.class.getDeclaredMethod("showOcrReview");render.setAccessible(true);render.invoke(activity);
+            String visible=visibleText(content);check(visible.contains("税率別対象額計：3000円（要確認）")&&visible.contains("税抜候補・要確認")&&visible.contains("候補値の金額関係は一致"));
+            check(visibleEditors(content)==2&&!visible.contains("原文："));
+            check(findLabel(content,"未取得の集計を匿名診断コピー").performClick());
+            check(model.aggregate().amountBasis==ReceiptParser.AmountBasis.UNKNOWN&&model.items.stream().noneMatch(i->i.selected||i.ready()));
+            findLabel(content,"要確認の項目だけまとめて確認").performClick();check(model.batch().summaryBasis==ReceiptParser.AmountBasis.EXCLUSIVE&&!model.batch().confirmSummary&&!model.batch().summaryChanged());
+        }catch(Throwable e){failure.set(e);}finally{if(activity!=null)callActivityOnDestroy(activity);}});
+        if(failure.get()!=null)throw new IllegalStateException("Synthetic fiscal rescue UI failed",failure.get());
     }
     @Override public void onCreate(Bundle args){super.onCreate(args);start();}
     @Override public void onStart(){
@@ -66,10 +185,17 @@ public final class OfflineOcrInstrumentation extends Instrumentation {
             check(BuildConfig.DEBUG);
             try(InputStream in=getTargetContext().getAssets().open("build-info.json")){
                 JSONObject build=new JSONObject(new String(in.readAllBytes(),StandardCharsets.UTF_8));
-                check(build.getInt("version_code")==12&&BuildConfig.VERSION_CODE==12);
+                check(build.getInt("version_code")==21&&BuildConfig.VERSION_CODE==21);
                 check(build.getString("source_commit").equals(BuildConfig.SOURCE_COMMIT)&&build.getBoolean("working_tree_dirty")==BuildConfig.SOURCE_DIRTY);
             }
             checks+=ReceiptClassificationAuditTest.run();
+            checks+=ReceiptPairingTest.run();
+            checks+=ReceiptPipelineTest.run();
+            checks+=ReceiptConfirmationTest.run();
+            checks+=ReceiptFiscalTest.run();
+            checks+=ReceiptFiscalStagesTest.run();
+            checks+=ReceiptFiscalRecoveryTest.run();
+            checks+=ReceiptFiscalRescueTest.run();
             PaddleOcr.verifyAssets(getTargetContext().getAssets());checks++;
             JSONArray fixtures;
             try(InputStream in=getContext().getAssets().open("synthetic-manifest.json")){
@@ -84,6 +210,13 @@ public final class OfflineOcrInstrumentation extends Instrumentation {
                     OcrDocument document=PaddleOcr.recognizeDocument(getTargetContext(),image);
                     check(!document.regions.isEmpty());
                     ReceiptParser.Receipt receipt=ReceiptParser.parseDocument(document);
+                    if(fixture.optBoolean("known_ocr_limit",false)){
+                        // Execution/safety checks only. Do not count this image as recognition accuracy success.
+                        check(receipt.items.size()<=80&&new ReceiptReview(receipt).items.stream().noneMatch(i->i.selected||i.ready()));
+                        check(!image.isRecycled()&&fingerprint(image)==before);
+                        String tess=ReceiptOcr.recognize(getTargetContext(),image);check(!tess.isEmpty()&&!image.isRecycled());check(fingerprint(image)==before);
+                        System.out.println("KNOWN_LIMIT fictional tall-layout OCR accuracy remains unresolved");continue;
+                    }
                     check(receipt.items.size()==fixture.getJSONArray("items").length());check(receipt.date.equals(fixture.getString("date")));
                     check(!receipt.store.isEmpty());
                     JSONArray names=fixture.getJSONArray("items"),amounts=fixture.getJSONArray("line_amounts");
@@ -106,6 +239,34 @@ public final class OfflineOcrInstrumentation extends Instrumentation {
                         check(receipt.taxBreakdowns.size()==2&&receipt.items.stream().allMatch(c->c.taxRate==null&&c.amountBasis==ReceiptParser.AmountBasis.EXCLUSIVE));
                         check(receipt.reconciliation().contains("金額一致"));
                     }
+                    if(fixture.optBoolean("fiscal_review",false)){
+                        check(receipt.items.size()==6&&receipt.heldItems.size()==2&&receipt.heldItems.stream().anyMatch(h->h.aggregateKind==ReceiptParser.Kind.TOTAL&&h.item.price==3140));
+                        ReceiptParser.TaxBreakdown eight=receipt.taxBreakdowns.stream().filter(b->b.rate==8).findFirst().orElseThrow(),ten=receipt.taxBreakdowns.stream().filter(b->b.rate==10).findFirst().orElseThrow();
+                        check(eight.base==960&&eight.tax==77&&eight.itemCount==5&&!eight.uncertain);
+                        check(ten.base==1912&&ten.tax==191&&ten.itemCount==3&&!ten.uncertain);
+                        check(receipt.taxAmount==268&&receipt.total==null&&receipt.itemSum()==2872);
+                        check(receipt.items.get(1).quantity==2&&receipt.items.get(1).unitPrice==79&&receipt.items.get(3).quantity==2&&receipt.items.get(3).unitPrice==245);
+                        ReceiptReview fiscal=new ReceiptReview(receipt);check(fiscal.items.stream().filter(i->i.quantityState==ReceiptReview.QuantityState.PROVISIONAL_ONE).count()==4&&fiscal.fiscalStatus().contains("税込の最終合計：3140円（要確認）"));
+                    }
+                    if(fixture.optBoolean("fiscal_stages",false)){
+                        boolean joined=file.equals("v0811-split-fiscal.png");
+                        check(receipt.items.size()==6&&receipt.heldItems.stream().anyMatch(h->h.aggregateKind==ReceiptParser.Kind.TOTAL&&h.item.price==3140));
+                        ReceiptParser.TaxBreakdown eight=receipt.taxBreakdowns.stream().filter(b->b.rate==8).findFirst().orElseThrow(),ten=receipt.taxBreakdowns.stream().filter(b->b.rate==10).findFirst().orElseThrow();
+                        check(eight.base==960&&eight.tax==77&&eight.itemCount==5&&eight.uncertain==joined);
+                        check(ten.base==1912&&ten.tax==191&&ten.itemCount==3&&ten.uncertain==joined);
+                        check(receipt.taxAmount==268&&receipt.taxAmountFromBreakdown&&receipt.taxAmountUncertain&&receipt.taxDetailsPending==joined&&receipt.total==null&&receipt.itemSum()==2872);
+                        check(receipt.items.get(1).quantity==2&&receipt.items.get(1).unitPrice==79&&receipt.items.get(3).quantity==2&&receipt.items.get(3).unitPrice==245);
+                        ReceiptReview fiscal=new ReceiptReview(receipt);
+                        check(fiscal.items.stream().filter(i->i.quantityState==ReceiptReview.QuantityState.PROVISIONAL_ONE).count()==4&&fiscal.fiscalStatus().contains("税込の最終合計：3140円（要確認）")&&(!joined||receipt.decisions.stream().anyMatch(d->d.audit.fiscal.tax==ReceiptDiagnostics.TaxStop.JOINED_RATE_PROPOSAL)));
+                    }
+                    if(fixture.optBoolean("fiscal_recovery",false)){
+                        recoveryResult(receipt);
+                        // Deliberate duplicate-region injection into real synthetic-image model output.
+                        recoveryResult(ReceiptParser.parseDocument(ReceiptFiscalRecoveryScenario.duplicateFiscal(document)));
+                    }
+                    if(fixture.optBoolean("fiscal_rescue",false)){
+                        rescueResult(receipt);OcrDocument duplicated=ReceiptFiscalRescueScenario.duplicateFiscal(document);check(duplicated.regions.size()>document.regions.size());rescueResult(ReceiptParser.parseDocument(duplicated));
+                    }
                     check(!image.isRecycled()&&fingerprint(image)==before);
                     String tess=ReceiptOcr.recognize(getTargetContext(),image);
                     check(!tess.isEmpty()&&!image.isRecycled());check(fingerprint(image)==before);
@@ -125,6 +286,9 @@ public final class OfflineOcrInstrumentation extends Instrumentation {
             isolated.deleteDatabase("private_pricebook.db");
             PriceDb db=new PriceDb(isolated);
             try{
+                confirmationUi(isolated);
+                fiscalUi(isolated);
+                rescueUi(isolated);
                 PriceDb.Purchase p=new PriceDb.Purchase();p.name="架空牛乳1L";p.key=PriceMath.key(p.name);p.store="架空テスト店";p.date="2026-10-25";p.gross=218;p.quantity=2;p.tax=8;p.unit="";
                 db.addPurchase(p);String backup=db.backupJson();db.importBackup(backup);
                 List<PriceDb.Purchase> rows=db.recentPurchases(10);check(rows.size()==1);check(rows.get(0).gross==218&&rows.get(0).quantity==2&&rows.get(0).date.equals("2026-10-25"));
@@ -165,6 +329,15 @@ public final class OfflineOcrInstrumentation extends Instrumentation {
                 PriceDb.Purchase invalid=new PriceDb.Purchase();invalid.quantity=0;
                 try{db.addReceiptPurchases(java.util.Arrays.asList(reviewed,invalid),parsed,model.store,model.date);throw new AssertionError();}catch(IllegalArgumentException expected){checks++;}check(db.backupJson().equals(full));
                 db.setChecked(db.allMemos().get(0).id,true);db.setMemoQuantity(db.allMemos().get(0).id,3);check(db.allMemos().get(0).checked&&db.allMemos().get(0).quantity==3);db.resetMemoChecks();check(db.allMemos().stream().noneMatch(m->m.checked));
+                PriceDb.Purchase weighed=new PriceDb.Purchase();weighed.name="架空量り売り肉";weighed.key=PriceMath.key(weighed.name);weighed.store="架空テスト店";weighed.date="2026-11-03";weighed.gross=399;weighed.quantity=1;weighed.taxKnown=false;weighed.tax=0;weighed.size=201.5;weighed.unit="g";weighed.specification="";weighed.lineAmount=399L;weighed.basis="UNKNOWN";
+                db.addPurchase(weighed);String weightedJson=db.backupJson();db.importBackup(weightedJson);PriceDb.Purchase weightRestored=db.latestForProduct(weighed.key).get(0);
+                check(weightRestored.size==201.5&&weightRestored.unit.equals("g")&&weightRestored.gross==399&&weightRestored.quantity==1);
+                check(weightRestored.printedUnit==null&&!weightedJson.contains("quantityState")&&!weightedJson.contains("PROVISIONAL_ONE")&&!weightedJson.contains("raw"));
+                db.deletePurchase(weightRestored.id);
+                PriceDb.Purchase taxOnly=new PriceDb.Purchase();taxOnly.name="架空税合算試験";taxOnly.key=PriceMath.key(taxOnly.name);taxOnly.store="架空テスト店";taxOnly.date="2026-11-03";taxOnly.gross=216;taxOnly.quantity=1;taxOnly.taxKnown=false;taxOnly.tax=0;taxOnly.unit="";taxOnly.lineAmount=200L;taxOnly.basis="EXCLUSIVE";
+                ReceiptParser.Receipt derivedTax=ReceiptParser.parseReceipt("税抜表示\n架空税合算試験200\n8%消費税16\n合計216");db.addReceiptPurchases(java.util.Collections.singletonList(taxOnly),derivedTax,taxOnly.store,taxOnly.date);
+                check(db.receiptSummary(taxOnly.receiptId).contains("要確認")&&derivedTax.taxAmountUncertain);
+                String taxJson=db.backupJson();db.importBackup(taxJson);PriceDb.Purchase taxRestored=db.latestForProduct(taxOnly.key).get(0);check(db.receiptSummary(taxRestored.receiptId).contains("要確認")&&taxRestored.gross==216&&taxRestored.quantity==1);db.deletePurchase(taxRestored.id);
                 long receiptId=db.latestForProduct(reviewed.key).get(0).receiptId;db.deletePurchase(db.latestForProduct(reviewed.key).get(0).id);check(db.receiptSummary(receiptId).isEmpty());check(db.allPurchases().size()==1&&db.allPurchases().get(0).gross==86);
             }finally{db.close();isolated.deleteDatabase("private_pricebook.db");}
             result.putString("status","PASS synthetic-only offline OCR and JSON roundtrip");result.putInt("checks",checks);finish(Activity.RESULT_OK,result);
